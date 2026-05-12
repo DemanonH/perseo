@@ -1,3 +1,4 @@
+'use strict';
 const router = require('express').Router();
 const auth = require('../middleware/auth');
 const { query } = require('../lib/db');
@@ -5,49 +6,44 @@ const evolution = require('../services/evolution');
 
 router.post('/connect', auth, async (req, res) => {
   try {
-    const userId = req.userId;
-    const instanceName = `perseo_${userId.replace(/-/g, '')}`;
+    const { userId, workspaceId } = req;
+    const instanceName = `perseo_${workspaceId.replace(/-/g, '')}`;
     const webhookUrl = `${process.env.BACKEND_URL}/webhook/evolution`;
 
-    // Upsert session record
     const existing = await query(
-      'SELECT id FROM whatsapp_sessions WHERE user_id = $1',
-      [userId]
+      'SELECT id FROM whatsapp_sessions WHERE workspace_id = $1',
+      [workspaceId]
     );
     if (existing.rows.length) {
       await query(
-        'UPDATE whatsapp_sessions SET status = $1, instance_name = $2 WHERE user_id = $3',
-        ['connecting', instanceName, userId]
+        'UPDATE whatsapp_sessions SET status = $1, instance_name = $2 WHERE workspace_id = $3',
+        ['connecting', instanceName, workspaceId]
       );
     } else {
       await query(
-        'INSERT INTO whatsapp_sessions (user_id, instance_name, status) VALUES ($1, $2, $3)',
-        [userId, instanceName, 'connecting']
+        'INSERT INTO whatsapp_sessions (user_id, workspace_id, instance_name, status) VALUES ($1, $2, $3, $4)',
+        [userId, workspaceId, instanceName, 'connecting']
       );
     }
 
-    // Check if instance already exists and is genuinely connected
     try {
       const state = await evolution.getConnectionState(instanceName);
       if (state === 'open') {
         await query(
-          'UPDATE whatsapp_sessions SET status = $1 WHERE user_id = $2',
-          ['connected', userId]
+          'UPDATE whatsapp_sessions SET status = $1 WHERE workspace_id = $2',
+          ['connected', workspaceId]
         );
         return res.json({ status: 'connected', instance: instanceName, qr: null });
       }
-      // Instance exists but not connected — delete it so we get a fresh QR
       try { await evolution.deleteInstance(instanceName); } catch (_) {}
-    } catch (_) {
-      // Instance doesn't exist yet — that's fine, we'll create it below
-    }
+    } catch (_) {}
 
     const result = await evolution.createInstance(instanceName, webhookUrl);
 
     const qr =
       result?.qrcode?.base64 ||
-      result?.qrcode?.code ||
-      result?.base64 ||
+      result?.qrcode?.code   ||
+      result?.base64         ||
       null;
 
     res.json({ qr, status: 'connecting', instance: instanceName });
@@ -59,10 +55,9 @@ router.post('/connect', auth, async (req, res) => {
 
 router.get('/status', auth, async (req, res) => {
   try {
-    const userId = req.userId;
     const session = await query(
-      'SELECT instance_name, status FROM whatsapp_sessions WHERE user_id = $1',
-      [userId]
+      'SELECT instance_name, status FROM whatsapp_sessions WHERE workspace_id = $1',
+      [req.workspaceId]
     );
 
     if (!session.rows.length) {
@@ -74,14 +69,14 @@ router.get('/status', auth, async (req, res) => {
     try {
       const state = await evolution.getConnectionState(instance_name);
       const newStatus =
-        state === 'open' ? 'connected' :
+        state === 'open'       ? 'connected' :
         state === 'connecting' ? 'connecting' :
         'disconnected';
 
       if (newStatus !== status) {
         await query(
-          'UPDATE whatsapp_sessions SET status = $1 WHERE user_id = $2',
-          [newStatus, userId]
+          'UPDATE whatsapp_sessions SET status = $1 WHERE workspace_id = $2',
+          [newStatus, req.workspaceId]
         );
       }
 
@@ -105,10 +100,9 @@ router.get('/status', auth, async (req, res) => {
 
 router.post('/disconnect', auth, async (req, res) => {
   try {
-    const userId = req.userId;
     const session = await query(
-      'SELECT instance_name FROM whatsapp_sessions WHERE user_id = $1',
-      [userId]
+      'SELECT instance_name FROM whatsapp_sessions WHERE workspace_id = $1',
+      [req.workspaceId]
     );
 
     if (session.rows.length) {
@@ -119,8 +113,8 @@ router.post('/disconnect', auth, async (req, res) => {
         console.warn('Evolution delete instance warning:', e.message);
       }
       await query(
-        'UPDATE whatsapp_sessions SET status = $1 WHERE user_id = $2',
-        ['disconnected', userId]
+        'UPDATE whatsapp_sessions SET status = $1 WHERE workspace_id = $2',
+        ['disconnected', req.workspaceId]
       );
     }
 
@@ -131,7 +125,8 @@ router.post('/disconnect', auth, async (req, res) => {
   }
 });
 
-// ─── Meta WhatsApp Cloud API — conectar sesión ───────────────────────────────
+// ─── Meta WhatsApp Cloud API ──────────────────────────────────────────────────
+
 router.post('/meta/connect', auth, async (req, res) => {
   try {
     const { phone_number_id, waba_id, access_token, phone_number, display_name } = req.body;
@@ -139,7 +134,7 @@ router.post('/meta/connect', auth, async (req, res) => {
       return res.status(400).json({ message: 'phone_number_id, waba_id y access_token son obligatorios' });
     }
     const { upsertSession } = require('../services/metaWhatsapp');
-    const session = await upsertSession(req.userId, {
+    const session = await upsertSession(req.userId, req.workspaceId, {
       phoneNumberId: phone_number_id,
       wabaId: waba_id,
       accessToken: access_token,
@@ -156,8 +151,8 @@ router.post('/meta/connect', auth, async (req, res) => {
 router.get('/meta/status', auth, async (req, res) => {
   try {
     const result = await query(
-      'SELECT id, phone_number_id, phone_number, display_name, is_active, created_at FROM meta_sessions WHERE user_id = $1 AND is_active = true',
-      [req.userId]
+      'SELECT id, phone_number_id, phone_number, display_name, is_active, created_at FROM meta_sessions WHERE workspace_id = $1 AND is_active = true',
+      [req.workspaceId]
     );
     res.json({ connected: result.rows.length > 0, session: result.rows[0] || null });
   } catch (err) {
@@ -167,7 +162,7 @@ router.get('/meta/status', auth, async (req, res) => {
 
 router.post('/meta/disconnect', auth, async (req, res) => {
   try {
-    await query('UPDATE meta_sessions SET is_active = false WHERE user_id = $1', [req.userId]);
+    await query('UPDATE meta_sessions SET is_active = false WHERE workspace_id = $1', [req.workspaceId]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ message: 'Error al desconectar sesión Meta' });

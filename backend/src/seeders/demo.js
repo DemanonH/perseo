@@ -1,14 +1,16 @@
+'use strict';
 const bcrypt = require('bcryptjs');
 const { query } = require('../lib/db');
 const logger = require('../lib/logger');
 
-const DEMO_EMAIL = 'demo@perseo.app';
+const DEMO_EMAIL    = 'demo@perseo.app';
 const DEMO_PASSWORD = 'demo1234';
+const ADMIN_EMAIL   = 'admin@perseo.app';
 
 const CAMPAIGNS = [
-  { name: 'Mesas de Madera',      ad_id: 'fb_mesas_001',    color: '#F5A623', keywords: ['mesa', 'madera', 'precio mesa', 'cuánto sale'] },
-  { name: 'Sillas Ergonómicas',   ad_id: 'ig_sillas_002',   color: '#6366F1', keywords: ['silla', 'ergonómica', 'oficina', 'silla precio'] },
-  { name: 'Cortinas Premium',     ad_id: 'fb_cortinas_003', color: '#10B981', keywords: ['cortina', 'tela', 'ventana', 'medida'] },
+  { name: 'Mesas de Madera',    ad_id: 'fb_mesas_001',    color: '#F5A623', keywords: ['mesa', 'madera', 'precio mesa', 'cuánto sale'] },
+  { name: 'Sillas Ergonómicas', ad_id: 'ig_sillas_002',   color: '#6366F1', keywords: ['silla', 'ergonómica', 'oficina', 'silla precio'] },
+  { name: 'Cortinas Premium',   ad_id: 'fb_cortinas_003', color: '#10B981', keywords: ['cortina', 'tela', 'ventana', 'medida'] },
 ];
 
 const LEAD_NAMES = [
@@ -92,10 +94,36 @@ function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+async function seedAdmin() {
+  const existing = await query('SELECT id FROM users WHERE email = $1', [ADMIN_EMAIL]);
+  if (existing.rows.length) return;
+
+  const hash = await bcrypt.hash('admin1234', 12);
+  const userResult = await query(
+    `INSERT INTO users (email, password_hash, name, plan_id, is_admin, onboarding_completed)
+     VALUES ($1, $2, 'Admin Perseo', 'agency', true, true) RETURNING id`,
+    [ADMIN_EMAIL, hash]
+  );
+  const userId = userResult.rows[0].id;
+
+  const wsResult = await query(
+    `INSERT INTO workspaces (name, owner_id) VALUES ('Admin Workspace', $1) RETURNING id`,
+    [userId]
+  );
+  await query(
+    `INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')`,
+    [wsResult.rows[0].id, userId]
+  );
+
+  logger.ok(`Admin creado: ${ADMIN_EMAIL} / admin1234`);
+}
+
 async function seed() {
   if (process.env.SEED_DEMO !== 'true') return;
 
   logger.seed('Verificando si el modo demo está habilitado...');
+
+  await seedAdmin();
 
   const existing = await query('SELECT id FROM users WHERE email = $1', [DEMO_EMAIL]);
   if (existing.rows.length) {
@@ -114,25 +142,36 @@ async function seed() {
   const userId = userResult.rows[0].id;
   logger.seed('Usuario demo creado', { email: DEMO_EMAIL });
 
-  await query(
-    'INSERT INTO google_sheets_config (user_id, is_connected) VALUES ($1, false)',
+  // Create workspace for demo user
+  const wsResult = await query(
+    `INSERT INTO workspaces (name, owner_id) VALUES ('Demo Workspace', $1) RETURNING id`,
     [userId]
+  );
+  const workspaceId = wsResult.rows[0].id;
+  await query(
+    `INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')`,
+    [workspaceId, userId]
+  );
+
+  await query(
+    'INSERT INTO google_sheets_config (user_id, workspace_id, is_connected) VALUES ($1, $2, false)',
+    [userId, workspaceId]
   );
 
   const campaignIds = [];
   for (const c of CAMPAIGNS) {
     const res = await query(
-      `INSERT INTO campaigns (user_id, name, ad_id, color, sheet_tab, is_active)
-       VALUES ($1, $2, $3, $4, $2, true) RETURNING id`,
-      [userId, c.name, c.ad_id, c.color]
+      `INSERT INTO campaigns (user_id, workspace_id, name, ad_id, color, sheet_tab, is_active)
+       VALUES ($1, $2, $3, $4, $5, $3, true) RETURNING id`,
+      [userId, workspaceId, c.name, c.ad_id, c.color]
     );
     const campId = res.rows[0].id;
     campaignIds.push(campId);
 
     for (const kw of c.keywords) {
       await query(
-        'INSERT INTO campaign_keywords (campaign_id, user_id, keyword) VALUES ($1, $2, $3)',
-        [campId, userId, kw]
+        'INSERT INTO campaign_keywords (campaign_id, user_id, workspace_id, keyword) VALUES ($1, $2, $3, $4)',
+        [campId, userId, workspaceId, kw]
       );
     }
   }
@@ -149,11 +188,11 @@ async function seed() {
 
     const leadRes = await query(
       `INSERT INTO leads
-         (user_id, campaign_id, phone, name, status, ai_score, ai_reason, ai_scored_at, received_at, converted_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         (user_id, workspace_id, campaign_id, phone, name, status, ai_score, ai_reason, ai_scored_at, received_at, converted_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
        RETURNING id`,
       [
-        userId, campaignId, phone, name,
+        userId, workspaceId, campaignId, phone, name,
         isConverted ? 'converted' : 'new',
         score,
         score === 'CALIENTE' ? 'El lead preguntó precio, pidió el link de pago y quiere comprar esta semana.' :
@@ -167,9 +206,8 @@ async function seed() {
     );
     const leadId = leadRes.rows[0].id;
 
-    const convType = score === 'CALIENTE' ? 'CALIENTE' : score === 'TIBIO' ? 'TIBIO' : score === 'FRIO' ? 'FRIO' : 'FRIO';
-    const convList = CONVERSATIONS[convType] || CONVERSATIONS.FRIO;
-    const msgs = pickRandom(convList);
+    const convType = score === 'CALIENTE' ? 'CALIENTE' : score === 'TIBIO' ? 'TIBIO' : 'FRIO';
+    const msgs = pickRandom(CONVERSATIONS[convType] || CONVERSATIONS.FRIO);
 
     let msgTime = receivedAt;
     for (const msg of msgs) {
@@ -193,7 +231,8 @@ async function seed() {
   logger.seed(`${leadsCreated} leads demo creados con mensajes y scoring`);
   logger.ok('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   logger.ok(`Datos demo cargados exitosamente.`);
-  logger.ok(`Ingresá con: ${DEMO_EMAIL} / ${DEMO_PASSWORD}`);
+  logger.ok(`Demo:  ${DEMO_EMAIL} / ${DEMO_PASSWORD}`);
+  logger.ok(`Admin: ${ADMIN_EMAIL} / admin1234`);
   logger.ok('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 }
 

@@ -1,3 +1,4 @@
+'use strict';
 const cron = require('node-cron');
 const { query } = require('../lib/db');
 const { scoreLeadsForUser } = require('../services/aiScorer');
@@ -12,7 +13,7 @@ async function runDailyScoring() {
     const yesterdayDate = yesterday.toISOString().split('T')[0];
 
     const leadsResult = await query(
-      `SELECT l.*, u.openai_api_key
+      `SELECT l.*, u.openai_api_key, l.workspace_id
        FROM leads l
        JOIN users u ON u.id = l.user_id
        WHERE DATE(l.received_at) = $1
@@ -20,7 +21,7 @@ async function runDailyScoring() {
          AND EXISTS (
            SELECT 1 FROM messages m WHERE m.lead_id = l.id
          )
-       ORDER BY l.user_id, l.received_at`,
+       ORDER BY l.workspace_id, l.received_at`,
       [yesterdayDate]
     );
 
@@ -29,24 +30,28 @@ async function runDailyScoring() {
       return;
     }
 
-    const byUser = {};
+    // Group by workspace (each workspace may have its own OpenAI key via owner)
+    const byWorkspace = {};
     for (const row of leadsResult.rows) {
       if (!row.openai_api_key && !process.env.OPENAI_API_KEY_FALLBACK) {
-        console.warn(`[DailyScoring] Usuario ${row.user_id} sin API key de OpenAI, saltando.`);
+        console.warn(`[DailyScoring] Lead ${row.id} sin API key de OpenAI, saltando.`);
         continue;
       }
       const apiKey = row.openai_api_key || process.env.OPENAI_API_KEY_FALLBACK;
-      if (!byUser[row.user_id]) {
-        byUser[row.user_id] = { apiKey, leads: [] };
+      const wid = row.workspace_id || row.user_id; // fallback for legacy rows
+      if (!byWorkspace[wid]) {
+        byWorkspace[wid] = { apiKey, leads: [] };
       }
-      byUser[row.user_id].leads.push(row);
+      byWorkspace[wid].leads.push(row);
     }
 
     let totalProcessed = 0;
     let totalErrors = 0;
 
-    for (const [userId, { apiKey, leads }] of Object.entries(byUser)) {
-      console.log(`[DailyScoring] Procesando ${leads.length} leads del usuario ${userId}`);
+    for (const [, { apiKey, leads }] of Object.entries(byWorkspace)) {
+      console.log(`[DailyScoring] Procesando ${leads.length} leads`);
+      // scoreLeadsForUser still accepts userId for compatibility; pass workspace owner's user_id
+      const userId = leads[0].user_id;
       const { processed, errors } = await scoreLeadsForUser(userId, apiKey, leads);
       totalProcessed += processed;
       totalErrors += errors;

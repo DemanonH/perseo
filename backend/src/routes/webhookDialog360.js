@@ -1,19 +1,12 @@
 'use strict';
 const router = require('express').Router();
-const crypto = require('crypto');
 const { query } = require('../lib/db');
 const { processMetaMessage } = require('../services/leadProcessor');
 const logger = require('../lib/logger');
 
-// 360dialog usa el mismo formato de payload que Meta Cloud API
-// Solo difiere en header de verificación: D360-Signature
-
-// ─── POST / ───────────────────────────────────────────────────────────────────
 router.post('/', async (req, res) => {
-  // Responder 200 inmediatamente (igual que Meta)
   res.sendStatus(200);
 
-  // Parsear body (viene como Buffer por express.raw)
   let body;
   try {
     const raw = Buffer.isBuffer(req.body) ? req.body.toString() : JSON.stringify(req.body);
@@ -34,32 +27,31 @@ router.post('/', async (req, res) => {
         const phoneNumberId = value?.metadata?.phone_number_id;
         if (!phoneNumberId) continue;
 
-        // Buscar sesión por phone_number_id — 360dialog envía el mismo phone_number_id de Meta
-        // También puede venir como channel_id o api_key lookup
         const sessionRes = await query(
-          `SELECT user_id FROM dialog360_sessions
+          `SELECT user_id, workspace_id FROM dialog360_sessions
            WHERE is_active = true
            AND (channel_id = $1 OR phone_number LIKE $2)
            LIMIT 1`,
           [phoneNumberId, `%${phoneNumberId}%`]
         );
 
-        // Fallback: buscar en meta_sessions también (por si comparten phone_number_id)
-        let userId = sessionRes.rows[0]?.user_id;
-        if (!userId) {
+        let ownerId     = sessionRes.rows[0]?.user_id;
+        let workspaceId = sessionRes.rows[0]?.workspace_id;
+
+        if (!workspaceId) {
           const metaRes = await query(
-            'SELECT user_id FROM meta_sessions WHERE phone_number_id = $1 AND is_active = true',
+            'SELECT user_id, workspace_id FROM meta_sessions WHERE phone_number_id = $1 AND is_active = true',
             [phoneNumberId]
           );
-          userId = metaRes.rows[0]?.user_id;
+          ownerId     = metaRes.rows[0]?.user_id;
+          workspaceId = metaRes.rows[0]?.workspace_id;
         }
 
-        if (!userId) {
+        if (!workspaceId) {
           logger.warn(`[360dialog] Sin sesión para phone_number_id: ${phoneNumberId}`);
           continue;
         }
 
-        // Procesar mensajes — mismo formato que Meta
         for (const msg of (value.messages || [])) {
           const phone = msg.from;
           const text  =
@@ -75,7 +67,7 @@ router.post('/', async (req, res) => {
           const name    = contact?.profile?.name || null;
 
           logger.wa(`[360dialog] ← ${phone}${name ? ` (${name})` : ''}: "${text.slice(0, 60)}"`);
-          await processMetaMessage(userId, { phone, name, text, fromMe: false });
+          await processMetaMessage(workspaceId, ownerId, { phone, name, text, fromMe: false });
         }
       }
     }

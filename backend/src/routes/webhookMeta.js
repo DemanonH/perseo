@@ -8,7 +8,6 @@ const logger = require('../lib/logger');
 const VERIFY_TOKEN = process.env.META_WEBHOOK_VERIFY_TOKEN || 'perseo_meta_verify_2024';
 const APP_SECRET   = process.env.META_APP_SECRET;
 
-// ─── GET: verificación del webhook por Meta ──────────────────────────────────
 router.get('/', (req, res) => {
   const mode      = req.query['hub.mode'];
   const token     = req.query['hub.verify_token'];
@@ -22,13 +21,10 @@ router.get('/', (req, res) => {
   res.sendStatus(403);
 });
 
-// ─── POST: mensajes entrantes de Meta ───────────────────────────────────────
 router.post('/', async (req, res) => {
-  // Verificar firma X-Hub-Signature-256
   if (APP_SECRET) {
     const sig = req.headers['x-hub-signature-256'];
     if (sig) {
-      // req.body es Buffer porque usamos express.raw() upstream
       const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body));
       const expected = 'sha256=' + crypto
         .createHmac('sha256', APP_SECRET)
@@ -41,10 +37,8 @@ router.post('/', async (req, res) => {
     }
   }
 
-  // Responder 200 de inmediato (Meta requiere respuesta rápida)
   res.sendStatus(200);
 
-  // Parsear el body (viene como Buffer por express.raw)
   let body;
   try {
     const raw = Buffer.isBuffer(req.body) ? req.body.toString() : JSON.stringify(req.body);
@@ -65,20 +59,18 @@ router.post('/', async (req, res) => {
         const phoneNumberId = value?.metadata?.phone_number_id;
         if (!phoneNumberId) continue;
 
-        // Buscar qué usuario de Perseo tiene ese número
         const sessionRes = await query(
-          'SELECT user_id FROM meta_sessions WHERE phone_number_id = $1 AND is_active = true',
+          'SELECT user_id, workspace_id FROM meta_sessions WHERE phone_number_id = $1 AND is_active = true',
           [phoneNumberId]
         );
         if (!sessionRes.rows.length) {
           logger.warn(`[Meta] Sin sesión registrada para phone_number_id: ${phoneNumberId}`);
           continue;
         }
-        const userId = sessionRes.rows[0].user_id;
+        const { user_id: ownerId, workspace_id: workspaceId } = sessionRes.rows[0];
 
-        // Procesar mensajes entrantes
         for (const msg of (value.messages || [])) {
-          const phone = msg.from; // ← siempre número real, sin LID
+          const phone = msg.from;
           const text  =
             msg.text?.body          ||
             msg.image?.caption      ||
@@ -86,13 +78,13 @@ router.post('/', async (req, res) => {
             msg.document?.caption   ||
             '';
 
-          if (!text) continue; // ignorar mensajes sin texto/caption
+          if (!text) continue;
 
           const contact = (value.contacts || []).find(c => c.wa_id === phone);
           const name    = contact?.profile?.name || null;
 
           logger.wa(`[Meta] ← ${phone}${name ? ` (${name})` : ''}: "${text.slice(0, 60)}"`);
-          await processMetaMessage(userId, { phone, name, text, fromMe: false });
+          await processMetaMessage(workspaceId, ownerId, { phone, name, text, fromMe: false });
         }
       }
     }

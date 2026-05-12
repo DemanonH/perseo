@@ -24,24 +24,22 @@ async function sendTextMessage(phoneNumberId, accessToken, toPhone, text) {
 /**
  * Obtener la sesión Meta activa de un usuario
  */
-async function getActiveSession(userId) {
+async function getActiveSession(workspaceId) {
   const result = await query(
-    'SELECT * FROM meta_sessions WHERE user_id = $1 AND is_active = true LIMIT 1',
-    [userId]
+    'SELECT * FROM meta_sessions WHERE workspace_id = $1 AND is_active = true LIMIT 1',
+    [workspaceId]
   );
   return result.rows[0] || null;
 }
 
-/**
- * Guardar o actualizar sesión Meta (Embedded Signup / test manual)
- */
-async function upsertSession(userId, { phoneNumberId, wabaId, accessToken, phoneNumber, displayName }) {
+async function upsertSession(userId, workspaceId, { phoneNumberId, wabaId, accessToken, phoneNumber, displayName }) {
   const result = await query(
-    `INSERT INTO meta_sessions (user_id, phone_number_id, waba_id, access_token, phone_number, display_name, is_active, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, true, NOW())
+    `INSERT INTO meta_sessions (user_id, workspace_id, phone_number_id, waba_id, access_token, phone_number, display_name, is_active, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, true, NOW())
      ON CONFLICT (phone_number_id)
      DO UPDATE SET
        user_id       = EXCLUDED.user_id,
+       workspace_id  = EXCLUDED.workspace_id,
        waba_id       = EXCLUDED.waba_id,
        access_token  = EXCLUDED.access_token,
        phone_number  = EXCLUDED.phone_number,
@@ -49,7 +47,7 @@ async function upsertSession(userId, { phoneNumberId, wabaId, accessToken, phone
        is_active     = true,
        updated_at    = NOW()
      RETURNING *`,
-    [userId, phoneNumberId, wabaId, accessToken, phoneNumber || null, displayName || null]
+    [userId, workspaceId, phoneNumberId, wabaId, accessToken, phoneNumber || null, displayName || null]
   );
   return result.rows[0];
 }

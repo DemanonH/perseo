@@ -1,3 +1,4 @@
+'use strict';
 const router = require('express').Router();
 const auth = require('../middleware/auth');
 const { query } = require('../lib/db');
@@ -7,8 +8,8 @@ router.get('/', auth, async (req, res) => {
   try {
     const { campaign_id, score, month, status, date_from, date_to, page = 1, limit = 50 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
-    const conditions = ['l.user_id = $1'];
-    const params = [req.userId];
+    const conditions = ['l.workspace_id = $1'];
+    const params = [req.workspaceId];
     let idx = 2;
 
     if (campaign_id) { conditions.push(`l.campaign_id = $${idx++}`); params.push(campaign_id); }
@@ -23,7 +24,6 @@ router.get('/', auth, async (req, res) => {
       params.push(date_from);
     }
     if (date_to) {
-      // inclusive: add 1 day so "hasta el 11/05" incluye todo ese día
       const dayAfter = new Date(new Date(date_to).getTime() + 86400000).toISOString().split('T')[0];
       conditions.push(`l.received_at < $${idx++}`);
       params.push(dayAfter);
@@ -52,24 +52,23 @@ router.get('/', auth, async (req, res) => {
 
 router.get('/metrics', auth, async (req, res) => {
   try {
-    const uid = req.userId;
+    const wid = req.workspaceId;
     const today = new Date().toISOString().split('T')[0];
     const month = today.slice(0, 7);
     const { date_from, date_to } = req.query;
 
-    // Rango personalizado o fallback a "hoy"
     const hasRange = date_from && date_to;
     const rangeEnd = hasRange
       ? new Date(new Date(date_to).getTime() + 86400000).toISOString().split('T')[0]
       : null;
 
     const periodQuery = hasRange
-      ? query(`SELECT COUNT(*) FROM leads WHERE user_id = $1 AND received_at >= $2 AND received_at < $3`, [uid, date_from, rangeEnd])
-      : query(`SELECT COUNT(*) FROM leads WHERE user_id = $1 AND DATE(received_at) = $2`, [uid, today]);
+      ? query(`SELECT COUNT(*) FROM leads WHERE workspace_id = $1 AND received_at >= $2 AND received_at < $3`, [wid, date_from, rangeEnd])
+      : query(`SELECT COUNT(*) FROM leads WHERE workspace_id = $1 AND DATE(received_at) = $2`, [wid, today]);
 
     const monthQuery = hasRange
-      ? query(`SELECT COUNT(*) FROM leads WHERE user_id = $1 AND received_at >= $2 AND received_at < $3`, [uid, date_from, rangeEnd])
-      : query(`SELECT COUNT(*) FROM leads WHERE user_id = $1 AND TO_CHAR(received_at,'YYYY-MM') = $2`, [uid, month]);
+      ? query(`SELECT COUNT(*) FROM leads WHERE workspace_id = $1 AND received_at >= $2 AND received_at < $3`, [wid, date_from, rangeEnd])
+      : query(`SELECT COUNT(*) FROM leads WHERE workspace_id = $1 AND TO_CHAR(received_at,'YYYY-MM') = $2`, [wid, month]);
 
     const responseRateQuery = hasRange
       ? query(
@@ -79,8 +78,8 @@ router.get('/metrics', auth, async (req, res) => {
                WHERE l.received_at >= $2 AND l.received_at < $3
                AND EXISTS (SELECT 1 FROM messages m WHERE m.lead_id = l.id AND m.from_me = true)
              ) AS responded_today
-           FROM leads l WHERE l.user_id = $1`,
-          [uid, date_from, rangeEnd]
+           FROM leads l WHERE l.workspace_id = $1`,
+          [wid, date_from, rangeEnd]
         )
       : query(
           `SELECT
@@ -89,16 +88,16 @@ router.get('/metrics', auth, async (req, res) => {
                WHERE DATE(l.received_at) = $2
                AND EXISTS (SELECT 1 FROM messages m WHERE m.lead_id = l.id AND m.from_me = true)
              ) AS responded_today
-           FROM leads l WHERE l.user_id = $1`,
-          [uid, today]
+           FROM leads l WHERE l.workspace_id = $1`,
+          [wid, today]
         );
 
     const [periodR, monthR, hotR, convertedR, activeCampsR, responseRateR, bestCampR] = await Promise.all([
       periodQuery,
       monthQuery,
-      query(`SELECT COUNT(*) FROM leads WHERE user_id = $1 AND ai_score = 'CALIENTE'`, [uid]),
-      query(`SELECT COUNT(*) FROM leads WHERE user_id = $1 AND status = 'converted'`, [uid]),
-      query(`SELECT COUNT(*) FROM campaigns WHERE user_id = $1 AND is_active = true`, [uid]),
+      query(`SELECT COUNT(*) FROM leads WHERE workspace_id = $1 AND ai_score = 'CALIENTE'`, [wid]),
+      query(`SELECT COUNT(*) FROM leads WHERE workspace_id = $1 AND status = 'converted'`, [wid]),
+      query(`SELECT COUNT(*) FROM campaigns WHERE workspace_id = $1 AND is_active = true`, [wid]),
       responseRateQuery,
       query(
         `SELECT c.name, c.color, c.id,
@@ -106,9 +105,9 @@ router.get('/metrics', auth, async (req, res) => {
                 COUNT(l.id) FILTER (WHERE l.ai_score = 'CALIENTE') AS hot_leads
          FROM campaigns c
          LEFT JOIN leads l ON l.campaign_id = c.id AND l.received_at > NOW() - INTERVAL '30 days'
-         WHERE c.user_id = $1 AND c.is_active = true
+         WHERE c.workspace_id = $1 AND c.is_active = true
          GROUP BY c.id ORDER BY hot_leads DESC, total_leads DESC LIMIT 3`,
-        [uid]
+        [wid]
       ),
     ]);
 
@@ -136,7 +135,10 @@ router.get('/metrics', auth, async (req, res) => {
 
 router.get('/:id/messages', auth, async (req, res) => {
   try {
-    const check = await query('SELECT id FROM leads WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+    const check = await query(
+      'SELECT id FROM leads WHERE id = $1 AND workspace_id = $2',
+      [req.params.id, req.workspaceId]
+    );
     if (!check.rows.length) return res.status(404).json({ message: 'Lead no encontrado' });
     const result = await query(
       'SELECT * FROM messages WHERE lead_id = $1 ORDER BY received_at ASC',
@@ -153,16 +155,19 @@ router.post('/:id/reply', auth, async (req, res) => {
     const { body } = req.body;
     if (!body || !body.trim()) return res.status(400).json({ message: 'El mensaje no puede estar vacío' });
 
-    const leadRes = await query('SELECT * FROM leads WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+    const leadRes = await query(
+      'SELECT * FROM leads WHERE id = $1 AND workspace_id = $2',
+      [req.params.id, req.workspaceId]
+    );
     if (!leadRes.rows.length) return res.status(404).json({ message: 'Lead no encontrado' });
     const lead = leadRes.rows[0];
     const to   = lead.phone;
     let sent = false;
 
-    // Prioridad: Meta → 360dialog → Twilio
+    // Priority: Meta → 360dialog → Twilio
     try {
       const metaSvc  = require('../services/metaWhatsapp');
-      const metaSess = await metaSvc.getActiveSession(req.userId);
+      const metaSess = await metaSvc.getActiveSession(req.workspaceId);
       if (metaSess) {
         await metaSvc.sendTextMessage(metaSess.phone_number_id, metaSess.access_token, to, body.trim());
         sent = true;
@@ -172,7 +177,7 @@ router.post('/:id/reply', auth, async (req, res) => {
     if (!sent) {
       try {
         const d360Svc  = require('../services/dialog360');
-        const d360Sess = await d360Svc.getActiveSession(req.userId);
+        const d360Sess = await d360Svc.getActiveSession(req.workspaceId);
         if (d360Sess) {
           await d360Svc.sendTextMessage(d360Sess.api_key, to, body.trim());
           sent = true;
@@ -183,7 +188,7 @@ router.post('/:id/reply', auth, async (req, res) => {
     if (!sent) {
       try {
         const twilioSvc  = require('../services/twilio');
-        const twilioSess = await twilioSvc.getActiveSession(req.userId);
+        const twilioSess = await twilioSvc.getActiveSession(req.workspaceId);
         if (twilioSess) {
           await twilioSvc.sendTextMessage(twilioSess.account_sid, twilioSess.auth_token, twilioSess.phone_number, to, body.trim());
           sent = true;
@@ -194,9 +199,9 @@ router.post('/:id/reply', auth, async (req, res) => {
     if (!sent) return res.status(400).json({ message: 'No hay proveedor de WhatsApp activo para enviar mensajes' });
 
     const msgRes = await query(
-      `INSERT INTO messages (lead_id, body, from_me, received_at)
-       VALUES ($1, $2, true, NOW()) RETURNING *`,
-      [lead.id, body.trim()]
+      `INSERT INTO messages (lead_id, user_id, body, from_me, received_at)
+       VALUES ($1, $2, $3, true, NOW()) RETURNING *`,
+      [lead.id, req.userId, body.trim()]
     );
     res.json(msgRes.rows[0]);
   } catch (err) {
@@ -212,18 +217,17 @@ router.patch('/:id/phone', auth, async (req, res) => {
       return res.status(400).json({ message: 'Número inválido' });
     }
     const cleaned = phone.replace(/\D/g, '');
-    // Check not already used by another lead of this user
     const dup = await query(
-      'SELECT id FROM leads WHERE user_id = $1 AND phone = $2 AND id != $3',
-      [req.userId, cleaned, req.params.id]
+      'SELECT id FROM leads WHERE workspace_id = $1 AND phone = $2 AND id != $3',
+      [req.workspaceId, cleaned, req.params.id]
     );
     if (dup.rows.length) {
       return res.status(409).json({ message: 'Ya existe un lead con ese número' });
     }
     const result = await query(
       `UPDATE leads SET phone = $1, phone_unresolved = false
-       WHERE id = $2 AND user_id = $3 RETURNING *`,
-      [cleaned, req.params.id, req.userId]
+       WHERE id = $2 AND workspace_id = $3 RETURNING *`,
+      [cleaned, req.params.id, req.workspaceId]
     );
     if (!result.rows.length) return res.status(404).json({ message: 'Lead no encontrado' });
     res.json(result.rows[0]);
@@ -236,8 +240,8 @@ router.patch('/:id/phone', auth, async (req, res) => {
 router.delete('/:id', auth, async (req, res) => {
   try {
     const result = await query(
-      'DELETE FROM leads WHERE id = $1 AND user_id = $2 RETURNING id, phone',
-      [req.params.id, req.userId]
+      'DELETE FROM leads WHERE id = $1 AND workspace_id = $2 RETURNING id, phone',
+      [req.params.id, req.workspaceId]
     );
     if (!result.rows.length) return res.status(404).json({ message: 'Lead no encontrado' });
     res.json({ success: true, phone: result.rows[0].phone });
@@ -251,8 +255,8 @@ router.post('/:id/convert', auth, async (req, res) => {
   try {
     const leadResult = await query(
       `UPDATE leads SET status = 'converted', converted_at = NOW()
-       WHERE id = $1 AND user_id = $2 AND status = 'new' RETURNING *`,
-      [req.params.id, req.userId]
+       WHERE id = $1 AND workspace_id = $2 AND status = 'new' RETURNING *`,
+      [req.params.id, req.workspaceId]
     );
     if (!leadResult.rows.length) return res.status(404).json({ message: 'Lead no encontrado o ya convertido' });
     const lead = leadResult.rows[0];
@@ -260,7 +264,7 @@ router.post('/:id/convert', auth, async (req, res) => {
     if (lead.sheet_row_index && lead.campaign_id) {
       try {
         const [config, camp] = await Promise.all([
-          query('SELECT * FROM google_sheets_config WHERE user_id = $1 AND is_connected = true', [req.userId]),
+          query('SELECT * FROM google_sheets_config WHERE workspace_id = $1 AND is_connected = true', [req.workspaceId]),
           query('SELECT sheet_tab, name FROM campaigns WHERE id = $1', [lead.campaign_id]),
         ]);
         if (config.rows.length && config.rows[0].spreadsheet_id && camp.rows.length) {

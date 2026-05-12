@@ -61,29 +61,30 @@ async function sendTextMessage(apiKey, toPhone, text) {
 }
 
 // ─── Sesión activa ────────────────────────────────────────────────────────────
-async function getActiveSession(userId) {
+async function getActiveSession(workspaceId) {
   const r = await query(
-    'SELECT * FROM dialog360_sessions WHERE user_id = $1 AND is_active = true LIMIT 1',
-    [userId]
+    'SELECT * FROM dialog360_sessions WHERE workspace_id = $1 AND is_active = true LIMIT 1',
+    [workspaceId]
   );
   return r.rows[0] || null;
 }
 
-async function upsertSession(userId, { channelId, apiKey, phoneNumber, displayName }) {
+async function upsertSession(userId, workspaceId, { channelId, apiKey, phoneNumber, displayName }) {
   const r = await query(
     `INSERT INTO dialog360_sessions
-       (user_id, channel_id, api_key, phone_number, display_name, is_active, updated_at)
-     VALUES ($1, $2, $3, $4, $5, true, NOW())
+       (user_id, workspace_id, channel_id, api_key, phone_number, display_name, is_active, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, true, NOW())
      ON CONFLICT (channel_id)
      DO UPDATE SET
        user_id      = EXCLUDED.user_id,
+       workspace_id = EXCLUDED.workspace_id,
        api_key      = EXCLUDED.api_key,
        phone_number = EXCLUDED.phone_number,
        display_name = EXCLUDED.display_name,
        is_active    = true,
        updated_at   = NOW()
      RETURNING *`,
-    [userId, channelId, apiKey, phoneNumber || null, displayName || null]
+    [userId, workspaceId, channelId, apiKey, phoneNumber || null, displayName || null]
   );
   return r.rows[0];
 }

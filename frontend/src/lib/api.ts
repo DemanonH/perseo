@@ -40,6 +40,23 @@ export const api = {
       request<{ token: string; user: User }>('/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password }) }),
   },
 
+  admin: {
+    metrics: () => request<AdminMetrics>('/admin/metrics'),
+    users: (params?: { page?: number; limit?: number; search?: string }) => {
+      const qs = params ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '';
+      return request<AdminUsersResponse>(`/admin/users${qs}`);
+    },
+    workspaces: () => request<AdminWorkspace[]>('/admin/workspaces'),
+    suspendUser: (id: string, suspended: boolean) =>
+      request<{ id: string; email: string; suspended: boolean }>(`/admin/users/${id}/suspend`, {
+        method: 'PATCH', body: JSON.stringify({ suspended }),
+      }),
+    updatePlan: (id: string, plan_id: string) =>
+      request<{ id: string; plan_id: string }>(`/admin/users/${id}/plan`, {
+        method: 'PATCH', body: JSON.stringify({ plan_id }),
+      }),
+  },
+
   whatsapp: {
     connect: () => request<{ qr: string | null; status: string }>('/whatsapp/connect', { method: 'POST' }),
     status: () => request<{ status: string; qr: string | null }>('/whatsapp/status'),
@@ -130,7 +147,32 @@ export const api = {
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export interface User { id: string; email: string; name: string; plan_id: string; }
+export interface User {
+  id: string; email: string; name: string; plan_id: string;
+  is_admin?: boolean; workspaceId?: string;
+}
+
+export interface AdminMetrics {
+  total_users: number; total_workspaces: number;
+  total_leads: number; new_users_30d: number;
+}
+
+export interface AdminUser {
+  id: string; email: string; name: string; plan_id: string;
+  is_admin: boolean; suspended: boolean; created_at: string;
+  lead_count: number; campaign_count: number;
+  workspace_id: string | null; workspace_name: string | null;
+}
+
+export interface AdminUsersResponse {
+  users: AdminUser[]; total: number; page: number; pages: number;
+}
+
+export interface AdminWorkspace {
+  id: string; name: string; created_at: string;
+  owner_email: string; owner_name: string; plan_id: string;
+  member_count: number; lead_count: number; campaign_count: number;
+}
 
 export interface UserSettings extends User {
   openai_api_key?: string;

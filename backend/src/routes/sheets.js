@@ -1,3 +1,4 @@
+'use strict';
 const router = require('express').Router();
 const { google } = require('googleapis');
 const auth = require('../middleware/auth');
@@ -15,11 +16,12 @@ function getOAuth2Client() {
 router.get('/auth-url', auth, async (req, res) => {
   try {
     const oauth2 = getOAuth2Client();
+    // Pass workspaceId in state so callback can look up the right config
     const url = oauth2.generateAuthUrl({
       access_type: 'offline',
       prompt: 'consent',
       scope: ['https://www.googleapis.com/auth/spreadsheets'],
-      state: req.userId,
+      state: req.workspaceId,
     });
     res.json({ url });
   } catch (err) {
@@ -30,8 +32,8 @@ router.get('/auth-url', auth, async (req, res) => {
 
 router.get('/callback', async (req, res) => {
   try {
-    const { code, state: userId } = req.query;
-    if (!code || !userId) {
+    const { code, state: workspaceId } = req.query;
+    if (!code || !workspaceId) {
       return res.redirect('/sheets?error=missing_params');
     }
 
@@ -39,22 +41,25 @@ router.get('/callback', async (req, res) => {
     const { tokens } = await oauth2.getToken(code);
 
     const existing = await query(
-      'SELECT id FROM google_sheets_config WHERE user_id = $1',
-      [userId]
+      'SELECT id FROM google_sheets_config WHERE workspace_id = $1',
+      [workspaceId]
     );
 
     if (existing.rows.length) {
       await query(
         `UPDATE google_sheets_config
          SET access_token = $1, refresh_token = COALESCE($2, refresh_token), is_connected = true
-         WHERE user_id = $3`,
-        [tokens.access_token, tokens.refresh_token || null, userId]
+         WHERE workspace_id = $3`,
+        [tokens.access_token, tokens.refresh_token || null, workspaceId]
       );
     } else {
+      // Need user_id for FK; find workspace owner
+      const ws = await query('SELECT owner_id FROM workspaces WHERE id = $1', [workspaceId]);
+      const ownerId = ws.rows[0]?.owner_id;
       await query(
-        `INSERT INTO google_sheets_config (user_id, access_token, refresh_token, is_connected)
-         VALUES ($1, $2, $3, true)`,
-        [userId, tokens.access_token, tokens.refresh_token || null]
+        `INSERT INTO google_sheets_config (user_id, workspace_id, access_token, refresh_token, is_connected)
+         VALUES ($1, $2, $3, $4, true)`,
+        [ownerId, workspaceId, tokens.access_token, tokens.refresh_token || null]
       );
     }
 
@@ -75,19 +80,19 @@ router.post('/connect', auth, async (req, res) => {
     }
 
     const existing = await query(
-      'SELECT id FROM google_sheets_config WHERE user_id = $1',
-      [req.userId]
+      'SELECT id FROM google_sheets_config WHERE workspace_id = $1',
+      [req.workspaceId]
     );
 
     if (existing.rows.length) {
       await query(
-        'UPDATE google_sheets_config SET spreadsheet_id = $1 WHERE user_id = $2',
-        [spreadsheet_id.trim(), req.userId]
+        'UPDATE google_sheets_config SET spreadsheet_id = $1 WHERE workspace_id = $2',
+        [spreadsheet_id.trim(), req.workspaceId]
       );
     } else {
       await query(
-        'INSERT INTO google_sheets_config (user_id, spreadsheet_id) VALUES ($1, $2)',
-        [req.userId, spreadsheet_id.trim()]
+        'INSERT INTO google_sheets_config (user_id, workspace_id, spreadsheet_id) VALUES ($1, $2, $3)',
+        [req.userId, req.workspaceId, spreadsheet_id.trim()]
       );
     }
 
@@ -101,8 +106,8 @@ router.post('/connect', auth, async (req, res) => {
 router.get('/status', auth, async (req, res) => {
   try {
     const result = await query(
-      'SELECT spreadsheet_id, is_connected FROM google_sheets_config WHERE user_id = $1',
-      [req.userId]
+      'SELECT spreadsheet_id, is_connected FROM google_sheets_config WHERE workspace_id = $1',
+      [req.workspaceId]
     );
     if (!result.rows.length) {
       return res.json({ is_connected: false, spreadsheet_id: null });
@@ -117,8 +122,8 @@ router.get('/status', auth, async (req, res) => {
 router.post('/test', auth, async (req, res) => {
   try {
     const config = await query(
-      'SELECT * FROM google_sheets_config WHERE user_id = $1',
-      [req.userId]
+      'SELECT * FROM google_sheets_config WHERE workspace_id = $1',
+      [req.workspaceId]
     );
     if (!config.rows.length || !config.rows[0].is_connected) {
       return res.status(400).json({ message: 'Google Sheets no está conectado' });

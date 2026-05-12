@@ -19,6 +19,7 @@ const onboardingRoutes  = require('./routes/onboarding');
 const healthRoutes      = require('./routes/health');
 const twilioRoutes        = require('./routes/twilio');
 const webhookTwilioRoutes = require('./routes/webhookTwilio');
+const adminRoutes         = require('./routes/admin');
 const { startDailyScoringJob } = require('./workers/dailyScoringJob');
 const { seed } = require('./seeders/demo');
 const { restoreWebhooks } = require('./workers/webhookSync');
@@ -50,6 +51,7 @@ app.use('/api/whatsapp/twilio',   twilioRoutes);
 app.use('/api/webhook/twilio',    webhookTwilioRoutes);
 app.use('/api/billing',           billingRoutes);
 app.use('/api/onboarding', onboardingRoutes);
+app.use('/api/admin',      adminRoutes);
 
 app.use((err, req, res, _next) => {
   logger.error(`${req.method} ${req.path}`, err.message);
@@ -256,7 +258,128 @@ async function runMigrations() {
     )
   `);
 
-  logger.ok('Migraciones aplicadas');
+  // ── Multi-tenant workspace system ─────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS workspaces (
+      id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name       VARCHAR(255) NOT NULL,
+      owner_id   UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS workspace_members (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      role         VARCHAR(20) DEFAULT 'owner' CHECK (role IN ('owner','member')),
+      created_at   TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(workspace_id, user_id)
+    )
+  `);
+
+  // Add is_admin and suspended flags to users
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin   BOOLEAN DEFAULT FALSE`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended  BOOLEAN DEFAULT FALSE`);
+
+  // Add workspace_id to all data tables
+  await query(`ALTER TABLE leads              ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE`);
+  await query(`ALTER TABLE campaigns          ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE`);
+  await query(`ALTER TABLE campaign_keywords  ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE`);
+  await query(`ALTER TABLE messages           ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE`);
+  await query(`ALTER TABLE google_sheets_config ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE`);
+  await query(`ALTER TABLE whatsapp_sessions  ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE`);
+  await query(`ALTER TABLE meta_sessions      ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE`);
+  await query(`ALTER TABLE dialog360_sessions ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE`);
+  await query(`ALTER TABLE twilio_sessions    ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE`);
+  await query(`ALTER TABLE whatsapp_contacts  ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE`);
+  await query(`ALTER TABLE subscriptions      ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE`);
+
+  // ── Workspace backfill: create one workspace per existing user ────────────
+  // Only runs for users that don't yet have a workspace
+  await query(`
+    INSERT INTO workspaces (id, name, owner_id, created_at)
+    SELECT gen_random_uuid(), u.name || '''s Workspace', u.id, u.created_at
+    FROM users u
+    WHERE NOT EXISTS (
+      SELECT 1 FROM workspaces w WHERE w.owner_id = u.id
+    )
+  `);
+  await query(`
+    INSERT INTO workspace_members (workspace_id, user_id, role)
+    SELECT w.id, w.owner_id, 'owner'
+    FROM workspaces w
+    WHERE NOT EXISTS (
+      SELECT 1 FROM workspace_members wm WHERE wm.workspace_id = w.id AND wm.user_id = w.owner_id
+    )
+  `);
+
+  // Backfill workspace_id on all data tables using user_id → workspace ownership
+  await query(`
+    UPDATE leads l SET workspace_id = w.id
+    FROM workspaces w WHERE w.owner_id = l.user_id AND l.workspace_id IS NULL
+  `);
+  await query(`
+    UPDATE campaigns c SET workspace_id = w.id
+    FROM workspaces w WHERE w.owner_id = c.user_id AND c.workspace_id IS NULL
+  `);
+  await query(`
+    UPDATE campaign_keywords ck SET workspace_id = w.id
+    FROM workspaces w WHERE w.owner_id = ck.user_id AND ck.workspace_id IS NULL
+  `);
+  await query(`
+    UPDATE messages m SET workspace_id = (
+      SELECT l.workspace_id FROM leads l WHERE l.id = m.lead_id
+    ) WHERE m.workspace_id IS NULL
+  `);
+  await query(`
+    UPDATE google_sheets_config g SET workspace_id = w.id
+    FROM workspaces w WHERE w.owner_id = g.user_id AND g.workspace_id IS NULL
+  `);
+  await query(`
+    UPDATE whatsapp_sessions s SET workspace_id = w.id
+    FROM workspaces w WHERE w.owner_id = s.user_id AND s.workspace_id IS NULL
+  `);
+  await query(`
+    UPDATE meta_sessions s SET workspace_id = w.id
+    FROM workspaces w WHERE w.owner_id = s.user_id AND s.workspace_id IS NULL
+  `);
+  await query(`
+    UPDATE dialog360_sessions s SET workspace_id = w.id
+    FROM workspaces w WHERE w.owner_id = s.user_id AND s.workspace_id IS NULL
+  `);
+  await query(`
+    UPDATE twilio_sessions s SET workspace_id = w.id
+    FROM workspaces w WHERE w.owner_id = s.user_id AND s.workspace_id IS NULL
+  `);
+  await query(`
+    UPDATE whatsapp_contacts c SET workspace_id = w.id
+    FROM workspaces w WHERE w.owner_id = c.user_id AND c.workspace_id IS NULL
+  `);
+  await query(`
+    UPDATE subscriptions s SET workspace_id = w.id
+    FROM workspaces w WHERE w.owner_id = s.user_id AND s.workspace_id IS NULL
+  `);
+
+  // Add workspace-scoped unique constraint on whatsapp_contacts (lid)
+  try {
+    await query(`ALTER TABLE whatsapp_contacts ADD CONSTRAINT whatsapp_contacts_workspace_lid_key UNIQUE (workspace_id, lid)`);
+  } catch (_) {} // already exists
+
+  // Indexes for workspace_id lookups
+  await query(`CREATE INDEX IF NOT EXISTS idx_leads_workspace      ON leads(workspace_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_campaigns_workspace  ON campaigns(workspace_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_kw_workspace         ON campaign_keywords(workspace_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_sessions_workspace   ON whatsapp_sessions(workspace_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_meta_workspace       ON meta_sessions(workspace_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_d360_workspace       ON dialog360_sessions(workspace_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_twilio_workspace     ON twilio_sessions(workspace_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_contacts_workspace   ON whatsapp_contacts(workspace_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_workspaces_owner     ON workspaces(owner_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_ws_members_user      ON workspace_members(user_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_ws_members_ws        ON workspace_members(workspace_id)`);
+
+  logger.ok('Migraciones aplicadas (workspace multi-tenant)');
 }
 
 async function start() {

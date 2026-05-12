@@ -1,3 +1,4 @@
+'use strict';
 const router = require('express').Router();
 const auth = require('../middleware/auth');
 const { query } = require('../lib/db');
@@ -13,9 +14,9 @@ router.get('/status', auth, async (req, res) => {
     const { onboarding_step, onboarding_completed } = userResult.rows[0];
 
     const [wpResult, campaignResult, sheetsResult] = await Promise.all([
-      query('SELECT status FROM whatsapp_sessions WHERE user_id = $1', [req.userId]),
-      query('SELECT COUNT(*) FROM campaigns WHERE user_id = $1', [req.userId]),
-      query('SELECT is_connected FROM google_sheets_config WHERE user_id = $1', [req.userId]),
+      query('SELECT status FROM whatsapp_sessions WHERE workspace_id = $1', [req.workspaceId]),
+      query('SELECT COUNT(*) FROM campaigns WHERE workspace_id = $1', [req.workspaceId]),
+      query('SELECT is_connected FROM google_sheets_config WHERE workspace_id = $1', [req.workspaceId]),
     ]);
 
     const steps = {

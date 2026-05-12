@@ -3,8 +3,6 @@ const { query } = require('../lib/db');
 const sheetsService = require('./sheets');
 const logger = require('../lib/logger');
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 function extractPhone(jid) {
   if (!jid) return null;
   return jid.replace(/@.*$/, '').trim();
@@ -20,13 +18,13 @@ function extractText(msg) {
   );
 }
 
-async function findMatchingCampaign(userId, text) {
+async function findMatchingCampaign(workspaceId, text) {
   const keywords = await query(
     `SELECT ck.*, c.name AS campaign_name, c.id AS campaign_id, c.color, c.sheet_tab
      FROM campaign_keywords ck
      JOIN campaigns c ON c.id = ck.campaign_id
-     WHERE ck.user_id = $1 AND ck.is_active = true AND c.is_active = true`,
-    [userId]
+     WHERE ck.workspace_id = $1 AND ck.is_active = true AND c.is_active = true`,
+    [workspaceId]
   );
   const lower = text.toLowerCase();
   for (const kw of keywords.rows) {
@@ -37,35 +35,36 @@ async function findMatchingCampaign(userId, text) {
   return null;
 }
 
-async function resolveLid(userId, lid) {
+async function resolveLid(workspaceId, lid) {
   const result = await query(
-    'SELECT phone, name FROM whatsapp_contacts WHERE user_id = $1 AND lid = $2',
-    [userId, lid]
+    'SELECT phone, name FROM whatsapp_contacts WHERE workspace_id = $1 AND lid = $2',
+    [workspaceId, lid]
   );
   return result.rows[0] || null;
 }
 
-// ─── Núcleo: crea/actualiza lead y mensaje ────────────────────────────────────
-// Usado tanto por Evolution (processMessage) como por Meta Cloud API (processMetaMessage)
+// ─── Core: create/update lead and message ─────────────────────────────────────
+// workspaceId: isolation key for all queries
+// ownerId: user_id FK value (workspace owner, for messages/leads FK)
 
-async function _processIncoming(userId, phone, name, text, fromMe, phoneUnresolved = false) {
+async function _processIncoming(workspaceId, ownerId, phone, name, text, fromMe, phoneUnresolved = false) {
   if (!phone || !text) return;
   name = name || phone;
 
   let leadResult = await query(
-    'SELECT * FROM leads WHERE user_id = $1 AND phone = $2',
-    [userId, phone]
+    'SELECT * FROM leads WHERE workspace_id = $1 AND phone = $2',
+    [workspaceId, phone]
   );
 
   let lead;
   let isNewLead = false;
 
   if (!leadResult.rows.length) {
-    if (fromMe) return; // No crear lead por mensajes propios sin historial
+    if (fromMe) return;
     const ins = await query(
-      `INSERT INTO leads (user_id, phone, name, received_at, phone_unresolved)
-       VALUES ($1, $2, $3, NOW(), $4) RETURNING *`,
-      [userId, phone, name, phoneUnresolved]
+      `INSERT INTO leads (user_id, workspace_id, phone, name, received_at, phone_unresolved)
+       VALUES ($1, $2, $3, $4, NOW(), $5) RETURNING *`,
+      [ownerId, workspaceId, phone, name, phoneUnresolved]
     );
     lead = ins.rows[0];
     isNewLead = true;
@@ -80,15 +79,14 @@ async function _processIncoming(userId, phone, name, text, fromMe, phoneUnresolv
 
   await query(
     'INSERT INTO messages (lead_id, user_id, body, from_me) VALUES ($1, $2, $3, $4)',
-    [lead.id, userId, text, fromMe]
+    [lead.id, ownerId, text, fromMe]
   );
   logger.wa(`Mensaje ${fromMe ? '→' : '←'} ${phone}: "${text.slice(0, 60)}${text.length > 60 ? '...' : ''}"`);
 
   if (fromMe) return;
 
-  // Asignar campaña por keyword
   if (!lead.campaign_id) {
-    const match = await findMatchingCampaign(userId, text);
+    const match = await findMatchingCampaign(workspaceId, text);
     if (match) {
       await query('UPDATE leads SET campaign_id = $1 WHERE id = $2', [match.campaign_id, lead.id]);
       lead.campaign_id   = match.campaign_id;
@@ -106,22 +104,22 @@ async function _processIncoming(userId, phone, name, text, fromMe, phoneUnresolv
   }
 
   if (isNewLead && lead.campaign_id) {
-    await writeLeadToSheet(userId, lead, text);
+    await writeLeadToSheet(workspaceId, lead, text);
   }
 }
 
-// ─── API pública: Evolution (Baileys / QR code) ───────────────────────────────
+// ─── Evolution (Baileys / QR code) ───────────────────────────────────────────
 
 async function processMessage(instanceName, msg) {
   const sessionResult = await query(
-    'SELECT user_id FROM whatsapp_sessions WHERE instance_name = $1',
+    'SELECT user_id, workspace_id FROM whatsapp_sessions WHERE instance_name = $1',
     [instanceName]
   );
   if (!sessionResult.rows.length) return;
-  const userId = sessionResult.rows[0].user_id;
+  const { user_id: ownerId, workspace_id: workspaceId } = sessionResult.rows[0];
 
   const remoteJid = msg?.key?.remoteJid || msg?.remoteJid || '';
-  if (!remoteJid || remoteJid.includes('@g.us')) return; // ignorar grupos
+  if (!remoteJid || remoteJid.includes('@g.us')) return;
 
   const fromMe  = msg?.key?.fromMe === true || msg?.fromMe === true;
   const isLid   = remoteJid.includes('@lid');
@@ -129,33 +127,31 @@ async function processMessage(instanceName, msg) {
   let name      = msg?.pushName || msg?.name || null;
 
   if (isLid) {
-    const resolved = await resolveLid(userId, phone);
+    const resolved = await resolveLid(workspaceId, phone);
     if (resolved) {
       phone = resolved.phone;
       name  = name || resolved.name;
       logger.lead(`LID ${extractPhone(remoteJid)} resuelto → ${phone}`);
     }
-    // si no se resuelve: se guarda el LID como teléfono y phone_unresolved=true
   }
 
   const text = extractText(msg);
-  await _processIncoming(userId, phone, name, text, fromMe, isLid);
+  await _processIncoming(workspaceId, ownerId, phone, name, text, fromMe, isLid);
 }
 
-// ─── API pública: Meta WhatsApp Cloud API ─────────────────────────────────────
-// Ventaja: Meta siempre provee el número real, sin LID.
+// ─── Meta WhatsApp Cloud API / 360dialog / Twilio ─────────────────────────────
 
-async function processMetaMessage(userId, { phone, name, text, fromMe }) {
-  return _processIncoming(userId, phone, name || null, text, fromMe || false, false);
+async function processMetaMessage(workspaceId, ownerId, { phone, name, text, fromMe }) {
+  return _processIncoming(workspaceId, ownerId, phone, name || null, text, fromMe || false, false);
 }
 
 // ─── Google Sheets ────────────────────────────────────────────────────────────
 
-async function writeLeadToSheet(userId, lead, firstMessage) {
+async function writeLeadToSheet(workspaceId, lead, firstMessage) {
   try {
     const config = await query(
-      'SELECT * FROM google_sheets_config WHERE user_id = $1 AND is_connected = true',
-      [userId]
+      'SELECT * FROM google_sheets_config WHERE workspace_id = $1 AND is_connected = true',
+      [workspaceId]
     );
     if (!config.rows.length || !config.rows[0].spreadsheet_id) return;
 

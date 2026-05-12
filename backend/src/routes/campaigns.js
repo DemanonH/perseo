@@ -1,3 +1,4 @@
+'use strict';
 const router = require('express').Router();
 const auth = require('../middleware/auth');
 const { query } = require('../lib/db');
@@ -17,10 +18,10 @@ router.get('/', auth, async (req, res) => {
        FROM campaigns c
        LEFT JOIN leads l         ON l.campaign_id = c.id
        LEFT JOIN campaign_keywords ck ON ck.campaign_id = c.id
-       WHERE c.user_id = $1
+       WHERE c.workspace_id = $1
        GROUP BY c.id
        ORDER BY c.created_at DESC`,
-      [req.userId]
+      [req.workspaceId]
     );
     res.json(result.rows);
   } catch (err) {
@@ -36,7 +37,7 @@ router.post('/', auth, async (req, res) => {
 
     const plan = await getUserPlan(req.userId);
     if (plan.max_campaigns !== -1) {
-      const count = await query('SELECT COUNT(*) FROM campaigns WHERE user_id = $1', [req.userId]);
+      const count = await query('SELECT COUNT(*) FROM campaigns WHERE workspace_id = $1', [req.workspaceId]);
       if (parseInt(count.rows[0].count) >= plan.max_campaigns) {
         return res.status(403).json({
           message: `Tu plan permite máximo ${plan.max_campaigns} campañas. Actualizá tu plan para crear más.`
@@ -45,20 +46,18 @@ router.post('/', auth, async (req, res) => {
     }
 
     const camp = await query(
-      `INSERT INTO campaigns (user_id, name, ad_id, color, sheet_tab)
-       VALUES ($1, $2, $3, $4, $2) RETURNING *`,
-      [req.userId, name.trim(), ad_id?.trim() || null, color]
+      `INSERT INTO campaigns (user_id, workspace_id, name, ad_id, color, sheet_tab)
+       VALUES ($1, $2, $3, $4, $5, $3) RETURNING *`,
+      [req.userId, req.workspaceId, name.trim(), ad_id?.trim() || null, color]
     );
     const campaign = camp.rows[0];
 
-    if (keywords.length) {
-      for (const kw of keywords) {
-        if (kw.trim()) {
-          await query(
-            'INSERT INTO campaign_keywords (campaign_id, user_id, keyword) VALUES ($1, $2, $3)',
-            [campaign.id, req.userId, kw.trim().toLowerCase()]
-          );
-        }
+    for (const kw of keywords) {
+      if (kw.trim()) {
+        await query(
+          'INSERT INTO campaign_keywords (campaign_id, user_id, workspace_id, keyword) VALUES ($1, $2, $3, $4)',
+          [campaign.id, req.userId, req.workspaceId, kw.trim().toLowerCase()]
+        );
       }
     }
 
@@ -87,8 +86,8 @@ router.put('/:id', auth, async (req, res) => {
            color     = COALESCE($3, color),
            is_active = COALESCE($4, is_active),
            sheet_tab = COALESCE($1, name)
-       WHERE id = $5 AND user_id = $6 RETURNING *`,
-      [name || null, ad_id || null, color || null, is_active !== undefined ? is_active : null, req.params.id, req.userId]
+       WHERE id = $5 AND workspace_id = $6 RETURNING *`,
+      [name || null, ad_id || null, color || null, is_active !== undefined ? is_active : null, req.params.id, req.workspaceId]
     );
     if (!result.rows.length) return res.status(404).json({ message: 'Campaña no encontrada' });
     res.json(result.rows[0]);
@@ -101,8 +100,8 @@ router.put('/:id', auth, async (req, res) => {
 router.delete('/:id', auth, async (req, res) => {
   try {
     const result = await query(
-      'DELETE FROM campaigns WHERE id = $1 AND user_id = $2 RETURNING id',
-      [req.params.id, req.userId]
+      'DELETE FROM campaigns WHERE id = $1 AND workspace_id = $2 RETURNING id',
+      [req.params.id, req.workspaceId]
     );
     if (!result.rows.length) return res.status(404).json({ message: 'Campaña no encontrada' });
     res.json({ success: true });
@@ -116,8 +115,8 @@ router.get('/:id/leads', auth, async (req, res) => {
   try {
     const { page = 1, limit = 50, score, status } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
-    const conditions = ['l.user_id = $1', 'l.campaign_id = $2'];
-    const params = [req.userId, req.params.id];
+    const conditions = ['l.workspace_id = $1', 'l.campaign_id = $2'];
+    const params = [req.workspaceId, req.params.id];
     let idx = 3;
 
     if (score)  { conditions.push(`l.ai_score = $${idx++}`); params.push(score); }
@@ -144,11 +143,14 @@ router.post('/:id/keywords', auth, async (req, res) => {
   try {
     const { keyword } = req.body;
     if (!keyword) return res.status(400).json({ message: 'keyword es requerida' });
-    const campCheck = await query('SELECT id FROM campaigns WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+    const campCheck = await query(
+      'SELECT id FROM campaigns WHERE id = $1 AND workspace_id = $2',
+      [req.params.id, req.workspaceId]
+    );
     if (!campCheck.rows.length) return res.status(404).json({ message: 'Campaña no encontrada' });
     const result = await query(
-      'INSERT INTO campaign_keywords (campaign_id, user_id, keyword) VALUES ($1, $2, $3) RETURNING *',
-      [req.params.id, req.userId, keyword.trim().toLowerCase()]
+      'INSERT INTO campaign_keywords (campaign_id, user_id, workspace_id, keyword) VALUES ($1, $2, $3, $4) RETURNING *',
+      [req.params.id, req.userId, req.workspaceId, keyword.trim().toLowerCase()]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -160,8 +162,8 @@ router.post('/:id/keywords', auth, async (req, res) => {
 router.delete('/:id/keywords/:kwId', auth, async (req, res) => {
   try {
     await query(
-      'DELETE FROM campaign_keywords WHERE id = $1 AND user_id = $2',
-      [req.params.kwId, req.userId]
+      'DELETE FROM campaign_keywords WHERE id = $1 AND workspace_id = $2',
+      [req.params.kwId, req.workspaceId]
     );
     res.json({ success: true });
   } catch (err) {
