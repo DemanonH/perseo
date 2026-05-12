@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon src/index.js",
-    "build": "cd ../frontend && npm install --include=dev && npm run build"
+    "build": "cd ../frontend && npm install --include=dev && npm run build && mkdir -p ../backend/.next && cp -r .next/standalone ../backend/.next/ && cp -r .next/static ../backend/.next/standalone/.next/"
   },
   "dependencies": {
     "axios": "^1.6.2",
