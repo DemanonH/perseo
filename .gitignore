@@ -1,0 +1,151 @@
+# ============================================================
+#  PERSEO — .gitignore
+#  Node.js + Next.js + Docker + Windows
+# ============================================================
+
+# ─── SECRETOS Y CREDENCIALES ─────────────────────────────────
+# NUNCA subir estos archivos a GitHub
+.env
+.env.local
+.env.production
+.env.production.local
+.env.staging
+.env.*.local
+
+# Dumps de credenciales (Evolution API session keys, WhatsApp auth)
+creds_dump.txt
+creds.json
+*.creds.json
+baileys_store*.json
+session_*.json
+auth_info_*.json
+
+# Claves privadas y certificados
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.cert
+id_rsa
+id_ed25519
+*.asc
+
+# ─── NODE.JS ──────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm
+.yarn/
+.pnp
+.pnp.js
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# ─── NEXT.JS ──────────────────────────────────────────────────
+.next/
+out/
+build/
+.vercel
+.netlify
+next-env.d.ts
+
+# ─── TYPESCRIPT ───────────────────────────────────────────────
+*.tsbuildinfo
+
+# ─── LOGS ─────────────────────────────────────────────────────
+logs/
+*.log
+*.log.*
+log/
+
+# ─── DOCKER ───────────────────────────────────────────────────
+# No excluimos docker-compose.yml (va al repo)
+# Sí excluimos datos de volúmenes locales si los hubiera
+docker/data/
+postgres/data/
+evolution/instances/
+evolution/store/
+
+# ─── BASES DE DATOS LOCALES ────────────────────────────────────
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+dump.sql
+*.dump
+
+# ─── SISTEMA OPERATIVO ───────────────────────────────────────
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# ─── EDITORES E IDEs ─────────────────────────────────────────
+.vscode/settings.json
+.vscode/launch.json
+.vscode/extensions.json
+# Conservamos .vscode/extensions.json si el equipo quiere recomendar extensiones
+# descomentá la línea de abajo para excluirlo también:
+# .vscode/
+
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+*.swo
+
+# ─── ARCHIVOS TEMPORALES ────────────────────────────────────
+tmp/
+temp/
+.tmp/
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+
+# ─── COVERAGE Y TESTING ──────────────────────────────────────
+coverage/
+.nyc_output/
+*.lcov
+test-results/
+playwright-report/
+.playwright/
+
+# ─── UPLOADS Y ARCHIVOS GENERADOS ────────────────────────────
+uploads/
+public/uploads/
+
+# ─── ARCHIVOS DE CONFIGURACIÓN SENSIBLES ADICIONALES ─────────
+.env.development.local
+.env.test.local
+google-credentials.json
+service-account*.json
+firebase*.json
