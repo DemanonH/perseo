@@ -1,10 +1,16 @@
 const { Pool } = require('pg');
 
+const isSSL = process.env.DATABASE_URL &&
+  (process.env.DATABASE_URL.includes('sslmode=require') ||
+   process.env.DATABASE_URL.includes('neon.tech') ||
+   process.env.NODE_ENV === 'production');
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: 20,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  connectionTimeoutMillis: 10000,
+  ssl: isSSL ? { rejectUnauthorized: false } : false,
 });
 
 pool.on('error', (err) => {
