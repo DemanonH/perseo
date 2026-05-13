@@ -119,11 +119,12 @@ async function seedAdmin() {
 }
 
 async function seed() {
+  // Always ensure admin user exists, regardless of SEED_DEMO flag
+  await seedAdmin();
+
   if (process.env.SEED_DEMO !== 'true') return;
 
   logger.seed('Verificando si el modo demo está habilitado...');
-
-  await seedAdmin();
 
   const existing = await query('SELECT id FROM users WHERE email = $1', [DEMO_EMAIL]);
   if (existing.rows.length) {
