@@ -18,7 +18,7 @@ export default function LoginPage() {
       const { token, user } = await api.auth.login(email, password);
       setToken(token);
       localStorage.setItem('perseo_user', JSON.stringify(user));
-      router.push('/dashboard');
+      router.push(user.is_admin ? '/admin' : '/dashboard');
     } catch (err) { setError((err as Error).message); }
     setLoading(false);
   }

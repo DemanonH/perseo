@@ -42,11 +42,13 @@ export const api = {
 
   admin: {
     metrics: () => request<AdminMetrics>('/admin/metrics'),
-    users: (params?: { page?: number; limit?: number; search?: string }) => {
-      const qs = params ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '';
+    users: (params?: { page?: number; limit?: number; search?: string; plan?: string; status?: string }) => {
+      const qs = params ? '?' + new URLSearchParams(Object.fromEntries(Object.entries(params).filter(([,v]) => v !== undefined && v !== '')) as Record<string, string>).toString() : '';
       return request<AdminUsersResponse>(`/admin/users${qs}`);
     },
     workspaces: () => request<AdminWorkspace[]>('/admin/workspaces'),
+    connections: () => request<AdminConnections>('/admin/connections'),
+    activity: () => request<AdminActivity[]>('/admin/activity'),
     suspendUser: (id: string, suspended: boolean) =>
       request<{ id: string; email: string; suspended: boolean }>(`/admin/users/${id}/suspend`, {
         method: 'PATCH', body: JSON.stringify({ suspended }),
@@ -55,6 +57,8 @@ export const api = {
       request<{ id: string; plan_id: string }>(`/admin/users/${id}/plan`, {
         method: 'PATCH', body: JSON.stringify({ plan_id }),
       }),
+    impersonate: (id: string) =>
+      request<{ token: string; user: User }>(`/admin/users/${id}/impersonate`, { method: 'POST' }),
   },
 
   whatsapp: {
@@ -153,15 +157,20 @@ export interface User {
 }
 
 export interface AdminMetrics {
-  total_users: number; total_workspaces: number;
-  total_leads: number; new_users_30d: number;
+  total_users: number; new_users_30d: number;
+  total_workspaces: number; leads_30d: number;
+  whatsapp_connected: number; mrr_cents: number;
+  active_subs: number;
+  plan_distribution: { plan_id: string; cnt: string }[];
 }
 
 export interface AdminUser {
   id: string; email: string; name: string; plan_id: string;
-  is_admin: boolean; suspended: boolean; created_at: string;
-  lead_count: number; campaign_count: number;
+  is_admin: boolean; suspended: boolean;
+  created_at: string; last_login: string | null;
+  lead_count: number; campaign_count: number; messages_7d: number;
   workspace_id: string | null; workspace_name: string | null;
+  whatsapp_connected: boolean; sub_status: string | null;
 }
 
 export interface AdminUsersResponse {
@@ -172,6 +181,24 @@ export interface AdminWorkspace {
   id: string; name: string; created_at: string;
   owner_email: string; owner_name: string; plan_id: string;
   member_count: number; lead_count: number; campaign_count: number;
+}
+
+export interface AdminConnectionItem {
+  workspace_id: string; workspace_name: string;
+  owner_email: string; owner_name: string;
+  provider: string; is_active?: boolean; status?: string;
+  phone_number?: string; display_name?: string; created_at: string;
+}
+
+export interface AdminConnections {
+  evolution: AdminConnectionItem[];
+  meta: AdminConnectionItem[];
+  dialog360: AdminConnectionItem[];
+  twilio: AdminConnectionItem[];
+}
+
+export interface AdminActivity {
+  type: 'signup' | 'lead'; name: string; email: string; ts: string; meta: string | null;
 }
 
 export interface UserSettings extends User {

@@ -278,9 +278,10 @@ async function runMigrations() {
     )
   `);
 
-  // Add is_admin and suspended flags to users
-  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin   BOOLEAN DEFAULT FALSE`);
-  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended  BOOLEAN DEFAULT FALSE`);
+  // Add is_admin, suspended and last_login to users
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin    BOOLEAN DEFAULT FALSE`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended   BOOLEAN DEFAULT FALSE`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login  TIMESTAMPTZ`);
 
   // Add workspace_id to all data tables
   await query(`ALTER TABLE leads              ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE`);
