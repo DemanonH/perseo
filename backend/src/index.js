@@ -20,6 +20,8 @@ const healthRoutes      = require('./routes/health');
 const twilioRoutes        = require('./routes/twilio');
 const webhookTwilioRoutes = require('./routes/webhookTwilio');
 const adminRoutes         = require('./routes/admin');
+const inboxRoutes     = require('./routes/inbox');
+const templatesRoutes = require('./routes/templates');
 const { startDailyScoringJob } = require('./workers/dailyScoringJob');
 const { seed } = require('./seeders/demo');
 const { restoreWebhooks } = require('./workers/webhookSync');
@@ -52,6 +54,8 @@ app.use('/api/webhook/twilio',    webhookTwilioRoutes);
 app.use('/api/billing',           billingRoutes);
 app.use('/api/onboarding', onboardingRoutes);
 app.use('/api/admin',      adminRoutes);
+app.use('/api/inbox',     inboxRoutes);
+app.use('/api/templates', templatesRoutes);
 
 app.use((err, req, res, _next) => {
   logger.error(`${req.method} ${req.path}`, err.message);
@@ -379,6 +383,27 @@ async function runMigrations() {
   await query(`CREATE INDEX IF NOT EXISTS idx_workspaces_owner     ON workspaces(owner_id)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_ws_members_user      ON workspace_members(user_id)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_ws_members_ws        ON workspace_members(workspace_id)`);
+
+  // ── WhatsApp templates ────────────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS wa_templates (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+      template_id  TEXT,
+      name         VARCHAR(512) NOT NULL,
+      category     VARCHAR(50)  NOT NULL,
+      language     VARCHAR(20)  DEFAULT 'es',
+      status       VARCHAR(30)  DEFAULT 'PENDING',
+      body_text    TEXT,
+      header_text  TEXT,
+      footer_text  TEXT,
+      meta_data    JSONB,
+      created_at   TIMESTAMPTZ  DEFAULT NOW(),
+      updated_at   TIMESTAMPTZ  DEFAULT NOW()
+    )
+  `);
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_templates_ws_tid ON wa_templates(workspace_id, template_id) WHERE template_id IS NOT NULL`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_templates_workspace ON wa_templates(workspace_id)`);
 
   logger.ok('Migraciones aplicadas (workspace multi-tenant)');
 }

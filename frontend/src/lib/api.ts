@@ -147,6 +147,21 @@ export const api = {
     update: (data: Partial<UserSettings & { openai_api_key?: string }>) =>
       request<UserSettings>('/settings', { method: 'PUT', body: JSON.stringify(data) }),
   },
+
+  inbox: {
+    conversations: (params?: { page?: number; limit?: number; search?: string }) => {
+      const qs = params ? '?' + new URLSearchParams(Object.fromEntries(Object.entries(params).filter(([,v]) => v !== undefined)) as Record<string,string>).toString() : '';
+      return request<InboxResponse>(`/inbox${qs}`);
+    },
+    messages: (leadId: string) => request<ConversationDetail>(`/inbox/${leadId}/messages`),
+    reply: (leadId: string, text: string) => request<{ message: Message }>(`/inbox/${leadId}/reply`, { method: 'POST', body: JSON.stringify({ text }) }),
+  },
+
+  templates: {
+    list: () => request<{ templates: WaTemplate[]; source: string }>('/templates'),
+    create: (data: { name: string; category: string; language: string; body: string; header?: string; footer?: string }) =>
+      request<{ template: WaTemplate }>('/templates', { method: 'POST', body: JSON.stringify(data) }),
+  },
 };
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -265,4 +280,29 @@ export interface MetaSession {
 export interface OnboardingStatus {
   steps: { account: boolean; whatsapp: boolean; campaigns: boolean; sheets: boolean };
   onboarding_completed: boolean; onboarding_step: number; completedCount: number;
+}
+
+export interface Conversation {
+  id: string; phone: string; name: string | null;
+  ai_score: 'FRIO' | 'TIBIO' | 'CALIENTE' | null;
+  status: 'new' | 'converted' | 'lost';
+  campaign_id: string | null; campaign_name: string | null; campaign_color: string | null;
+  last_message: string | null; last_from_me: boolean | null; last_message_at: string | null;
+  unread_count: number; message_count: number; received_at: string;
+}
+
+export interface ConversationDetail {
+  lead: Lead & { campaign_name: string | null; campaign_color: string | null };
+  messages: Message[];
+}
+
+export interface InboxResponse {
+  conversations: Conversation[]; total: number; page: number; pages: number;
+}
+
+export interface WaTemplate {
+  id: string; name: string; category: string; language: string; status: string;
+  body_text: string | null; header_text: string | null; footer_text: string | null;
+  components?: { type: string; text?: string; format?: string }[];
+  created_at?: string;
 }

@@ -4,12 +4,14 @@ import { usePathname, useRouter } from 'next/navigation';
 import { clearToken } from '@/lib/api';
 
 const links = [
-  { href: '/dashboard',        label: 'Dashboard',       icon: '◈' },
-  { href: '/campaigns',        label: 'Campañas',        icon: '◎' },
-  { href: '/leads',            label: 'Leads',           icon: '◉' },
-  { href: '/connect-whatsapp', label: 'WhatsApp',        icon: '◍' },
-  { href: '/sheets',           label: 'Google Sheets',   icon: '◫' },
-  { href: '/settings',         label: 'Ajustes',         icon: '◌' },
+  { href: '/dashboard',        label: 'Dashboard',     icon: '◈' },
+  { href: '/inbox',            label: 'Inbox',         icon: '◷' },
+  { href: '/campaigns',        label: 'Campañas',      icon: '◎' },
+  { href: '/leads',            label: 'Leads',         icon: '◉' },
+  { href: '/templates',        label: 'Templates',     icon: '◧' },
+  { href: '/connect-whatsapp', label: 'WhatsApp',      icon: '◍' },
+  { href: '/sheets',           label: 'Google Sheets', icon: '◫' },
+  { href: '/settings',         label: 'Ajustes',       icon: '◌' },
 ];
 
 export default function Sidebar() {

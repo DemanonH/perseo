@@ -52,6 +52,39 @@ async function upsertSession(userId, workspaceId, { phoneNumberId, wabaId, acces
   return result.rows[0];
 }
 
+async function getTemplates(wabaId, accessToken) {
+  return _graphGet(
+    `/${GRAPH_VERSION}/${wabaId}/message_templates?fields=id,name,status,category,language,components&limit=100`,
+    accessToken
+  );
+}
+
+async function createTemplate(wabaId, accessToken, templateData) {
+  const payload = JSON.stringify(templateData);
+  logger.wa(`[Meta] Creating template: ${templateData.name}`);
+  return _graphPost(`/${GRAPH_VERSION}/${wabaId}/message_templates`, accessToken, payload);
+}
+
+function _graphGet(path, accessToken) {
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: 'graph.facebook.com',
+      path,
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${accessToken}` },
+    };
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch { resolve({ raw: data, status: res.statusCode }); }
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 // ─── Helpers internos ────────────────────────────────────────────────────────
 
 function _graphPost(path, accessToken, payload) {
@@ -89,4 +122,4 @@ function _graphPost(path, accessToken, payload) {
   });
 }
 
-module.exports = { sendTextMessage, getActiveSession, upsertSession };
+module.exports = { sendTextMessage, getActiveSession, upsertSession, getTemplates, createTemplate };
