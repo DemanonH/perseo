@@ -27,7 +27,7 @@ router.get('/', auth, async (req, res) => {
     const result = await query(`
       SELECT
         l.id, l.phone, l.name, l.ai_score, l.status, l.received_at,
-        l.campaign_id,
+        l.lead_temperature, l.campaign_id,
         c.name  AS campaign_name,
         c.color AS campaign_color,
         lm.body        AS last_message,

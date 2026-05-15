@@ -2,6 +2,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/layout/Sidebar';
+import { TempBadge, TempSelector } from '@/components/ui/TempBadge';
 import { api, Conversation, Message } from '@/lib/api';
 
 function timeAgo(dateStr: string | null): string {
@@ -220,6 +221,20 @@ export default function InboxPage() {
                     {selectedLead.ai_score}
                   </span>
                 )}
+                <div className="flex items-center gap-1.5 border-l border-white/8 pl-3">
+                  <TempBadge temp={selectedLead.lead_temperature} />
+                  <TempSelector
+                    leadId={selectedLead.id}
+                    current={selectedLead.lead_temperature}
+                    compact
+                    onUpdate={temp => {
+                      setSelectedLead(prev => prev ? { ...prev, lead_temperature: temp } : prev);
+                      setConversations(prev => prev.map(c =>
+                        c.id === selectedLead.id ? { ...c, lead_temperature: temp } : c
+                      ));
+                    }}
+                  />
+                </div>
               </div>
             </div>
 

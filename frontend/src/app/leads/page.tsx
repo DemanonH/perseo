@@ -17,6 +17,7 @@ export default function LeadsPage() {
   const [loading, setLoading] = useState(true);
   const [filterCampaign, setFilterCampaign] = useState('');
   const [filterScore, setFilterScore] = useState('');
+  const [filterTemperature, setFilterTemperature] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterMonth, setFilterMonth] = useState('');
   const [filterDateFrom, setFilterDateFrom] = useState('');
@@ -32,24 +33,25 @@ export default function LeadsPage() {
     setLoading(true);
     try {
       const params: Record<string, string | number> = { page, limit: 50 };
-      if (filterCampaign)  params.campaign_id = filterCampaign;
-      if (filterScore)     params.score       = filterScore;
-      if (filterStatus)    params.status      = filterStatus;
-      if (filterMonth)     params.month       = filterMonth;
-      if (filterDateFrom)  params.date_from   = filterDateFrom;
-      if (filterDateTo)    params.date_to     = filterDateTo;
+      if (filterCampaign)    params.campaign_id  = filterCampaign;
+      if (filterScore)       params.score        = filterScore;
+      if (filterTemperature) params.temperature  = filterTemperature;
+      if (filterStatus)      params.status       = filterStatus;
+      if (filterMonth)       params.month        = filterMonth;
+      if (filterDateFrom)    params.date_from    = filterDateFrom;
+      if (filterDateTo)      params.date_to      = filterDateTo;
       const res = await api.leads.list(params);
       setLeads(res.leads);
       setTotal(res.total);
       setPages(res.pages);
     } catch {}
     setLoading(false);
-  }, [page, filterCampaign, filterScore, filterStatus, filterMonth, filterDateFrom, filterDateTo]);
+  }, [page, filterCampaign, filterScore, filterTemperature, filterStatus, filterMonth, filterDateFrom, filterDateTo]);
 
   useEffect(() => { fetchLeads(); }, [fetchLeads]);
 
   function clearFilters() {
-    setFilterCampaign(''); setFilterScore(''); setFilterStatus('');
+    setFilterCampaign(''); setFilterScore(''); setFilterTemperature(''); setFilterStatus('');
     setFilterMonth(''); setFilterDateFrom(''); setFilterDateTo('');
     setActiveQuick(''); setPage(1);
   }
@@ -73,7 +75,7 @@ export default function LeadsPage() {
     }
   }
 
-  const hasFilters = filterCampaign || filterScore || filterStatus || filterMonth || filterDateFrom || filterDateTo;
+  const hasFilters = filterCampaign || filterScore || filterTemperature || filterStatus || filterMonth || filterDateFrom || filterDateTo;
 
   return (
     <div className="flex min-h-screen">
@@ -97,10 +99,18 @@ export default function LeadsPage() {
 
             <select value={filterScore} onChange={e => { setFilterScore(e.target.value); setPage(1); }}
               className="bg-[#141414] border border-white/10 text-white/60 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-[#F5A623]/30">
-              <option value="">Toda temperatura</option>
-              <option value="CALIENTE">🟢 Caliente</option>
-              <option value="TIBIO">🟡 Tibio</option>
-              <option value="FRIO">🔴 Frío</option>
+              <option value="">Score IA</option>
+              <option value="CALIENTE">🟢 Caliente (IA)</option>
+              <option value="TIBIO">🟡 Tibio (IA)</option>
+              <option value="FRIO">🔴 Frío (IA)</option>
+            </select>
+
+            <select value={filterTemperature} onChange={e => { setFilterTemperature(e.target.value); setPage(1); }}
+              className="bg-[#141414] border border-white/10 text-white/60 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-[#F5A623]/30">
+              <option value="">Temp. manual</option>
+              <option value="hot">🔥 Caliente</option>
+              <option value="warm">🌡 Tibio</option>
+              <option value="cold">❄️ Frío</option>
             </select>
 
             <select value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(1); }}

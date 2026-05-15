@@ -8,6 +8,13 @@ const SCORE_COLORS = {
   FRIO:     { red: 0.95, green: 0.7, blue: 0.7 },
 };
 
+// Manual temperature colors (hot=red, warm=yellow, cold=gray)
+const TEMPERATURE_COLORS = {
+  hot:  { red: 0.96, green: 0.80, blue: 0.80 },  // rojo suave
+  warm: { red: 1.00, green: 0.95, blue: 0.60 },  // amarillo
+  cold: { red: 0.88, green: 0.88, blue: 0.92 },  // gris azulado
+};
+
 function buildAuthClient(config) {
   const oauth2 = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
@@ -127,4 +134,32 @@ async function colorRow(config, sheetName, rowIndex, score) {
   });
 }
 
-module.exports = { appendRow, updateRow, updateCell, colorRow, getOrCreateSheet };
+async function colorRowByTemperature(config, sheetName, rowIndex, temperature) {
+  const color = TEMPERATURE_COLORS[temperature];
+  if (!color) return;
+
+  const auth = buildAuthClient(config);
+  const sheets = google.sheets({ version: 'v4', auth });
+  const sheetId = await getOrCreateSheet(sheets, config.spreadsheet_id, sheetName);
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: config.spreadsheet_id,
+    requestBody: {
+      requests: [{
+        repeatCell: {
+          range: {
+            sheetId,
+            startRowIndex: rowIndex - 1,
+            endRowIndex: rowIndex,
+            startColumnIndex: 0,
+            endColumnIndex: HEADERS.length,
+          },
+          cell: { userEnteredFormat: { backgroundColor: color } },
+          fields: 'userEnteredFormat.backgroundColor',
+        },
+      }],
+    },
+  });
+}
+
+module.exports = { appendRow, updateRow, updateCell, colorRow, colorRowByTemperature, getOrCreateSheet };

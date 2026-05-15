@@ -405,6 +405,11 @@ async function runMigrations() {
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_templates_ws_tid ON wa_templates(workspace_id, template_id) WHERE template_id IS NOT NULL`);
   await query(`CREATE INDEX IF NOT EXISTS idx_templates_workspace ON wa_templates(workspace_id)`);
 
+  // ── Lead manual temperature ───────────────────────────────────────────────
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_temperature VARCHAR(10) CHECK (lead_temperature IN ('cold','warm','hot'))`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS temperature_updated_at TIMESTAMPTZ`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_leads_temperature ON leads(lead_temperature)`);
+
   logger.ok('Migraciones aplicadas (workspace multi-tenant)');
 }
 

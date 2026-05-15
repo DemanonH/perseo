@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Lead, api } from '@/lib/api';
 import ConversationModal from './ConversationModal';
 import ScoreBadge from './ScoreBadge';
+import { TempBadge, TempSelector } from './TempBadge';
 
 interface Props {
   leads: Lead[];
@@ -66,7 +67,7 @@ export default function LeadTable({ leads, onConvert, onDelete, onUpdate }: Prop
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-white/8 bg-white/2">
-              {['Fecha', 'Nombre', 'Teléfono', 'Campaña', 'Temperatura', 'Razón IA', 'Estado', ''].map(h => (
+              {['Fecha', 'Nombre', 'Teléfono', 'Campaña', 'Temp. Manual', 'Score IA', 'Estado', ''].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-white/30 font-medium text-xs uppercase tracking-wide whitespace-nowrap">
                   {h}
                 </th>
@@ -76,13 +77,19 @@ export default function LeadTable({ leads, onConvert, onDelete, onUpdate }: Prop
           <tbody>
             {leads.length === 0 && (
               <tr>
-                <td colSpan={8} className="text-center py-14 text-white/20 text-sm">
+                <td colSpan={9} className="text-center py-14 text-white/20 text-sm">
                   No hay leads que coincidan con los filtros seleccionados.
                 </td>
               </tr>
             )}
-            {leads.map(lead => (
-              <tr key={lead.id} className="border-b border-white/4 hover:bg-white/2 transition-colors">
+            {leads.map(lead => {
+              const rowBg =
+                lead.lead_temperature === 'hot'  ? 'bg-red-500/4 hover:bg-red-500/7' :
+                lead.lead_temperature === 'warm' ? 'bg-amber-500/4 hover:bg-amber-500/7' :
+                lead.lead_temperature === 'cold' ? 'bg-slate-500/4 hover:bg-slate-500/7' :
+                'hover:bg-white/2';
+              return (
+              <tr key={lead.id} className={`border-b border-white/4 transition-colors ${rowBg}`}>
                 <td className="px-4 py-3 text-white/40 whitespace-nowrap text-xs">
                   {new Date(lead.received_at).toLocaleDateString('es-AR')}
                 </td>
@@ -137,6 +144,17 @@ export default function LeadTable({ leads, onConvert, onDelete, onUpdate }: Prop
                   )}
                 </td>
                 <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <TempBadge temp={lead.lead_temperature} />
+                    <TempSelector
+                      leadId={lead.id}
+                      current={lead.lead_temperature}
+                      compact
+                      onUpdate={temp => onUpdate?.({ ...lead, lead_temperature: temp })}
+                    />
+                  </div>
+                </td>
+                <td className="px-4 py-3">
                   <ScoreBadge score={lead.ai_score} />
                 </td>
                 <td className="px-4 py-3 text-white/40 text-xs max-w-[180px]">
@@ -171,7 +189,8 @@ export default function LeadTable({ leads, onConvert, onDelete, onUpdate }: Prop
                   </div>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>

@@ -3,18 +3,20 @@ const router = require('express').Router();
 const auth = require('../middleware/auth');
 const { query } = require('../lib/db');
 const sheetsService = require('../services/sheets');
+const logger = require('../lib/logger');
 
 router.get('/', auth, async (req, res) => {
   try {
-    const { campaign_id, score, month, status, date_from, date_to, page = 1, limit = 50 } = req.query;
+    const { campaign_id, score, temperature, month, status, date_from, date_to, page = 1, limit = 50 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
     const conditions = ['l.workspace_id = $1'];
     const params = [req.workspaceId];
     let idx = 2;
 
-    if (campaign_id) { conditions.push(`l.campaign_id = $${idx++}`); params.push(campaign_id); }
-    if (score)       { conditions.push(`l.ai_score = $${idx++}`);    params.push(score); }
-    if (status)      { conditions.push(`l.status = $${idx++}`);      params.push(status); }
+    if (campaign_id)  { conditions.push(`l.campaign_id = $${idx++}`);      params.push(campaign_id); }
+    if (score)        { conditions.push(`l.ai_score = $${idx++}`);          params.push(score); }
+    if (temperature)  { conditions.push(`l.lead_temperature = $${idx++}`);  params.push(temperature); }
+    if (status)       { conditions.push(`l.status = $${idx++}`);            params.push(status); }
     if (month) {
       conditions.push(`TO_CHAR(l.received_at, 'YYYY-MM') = $${idx++}`);
       params.push(month);
@@ -207,6 +209,54 @@ router.post('/:id/reply', auth, async (req, res) => {
   } catch (err) {
     console.error('[reply] error:', err);
     res.status(500).json({ message: 'Error al enviar el mensaje: ' + err.message });
+  }
+});
+
+router.patch('/:id/temperature', auth, async (req, res) => {
+  try {
+    const { temperature } = req.body;
+    const validTemps = ['cold', 'warm', 'hot', null];
+    if (!validTemps.includes(temperature ?? null)) {
+      return res.status(400).json({ message: 'Temperatura inválida. Usar: cold, warm, hot o null' });
+    }
+
+    const result = await query(
+      `UPDATE leads SET lead_temperature = $1, temperature_updated_at = CASE WHEN $1 IS NOT NULL THEN NOW() ELSE temperature_updated_at END
+       WHERE id = $2 AND workspace_id = $3 RETURNING *`,
+      [temperature || null, req.params.id, req.workspaceId]
+    );
+    if (!result.rows.length) return res.status(404).json({ message: 'Lead no encontrado' });
+    const lead = result.rows[0];
+
+    // Sync to Google Sheets (async, non-blocking)
+    if (lead.sheet_row_index && lead.campaign_id) {
+      (async () => {
+        try {
+          const [configRes, campRes] = await Promise.all([
+            query('SELECT * FROM google_sheets_config WHERE workspace_id = $1 AND is_connected = true', [req.workspaceId]),
+            query('SELECT sheet_tab, name FROM campaigns WHERE id = $1', [lead.campaign_id]),
+          ]);
+          if (!configRes.rows.length || !configRes.rows[0].spreadsheet_id || !campRes.rows.length) return;
+          const cfg      = configRes.rows[0];
+          const sheetTab = campRes.rows[0].sheet_tab || campRes.rows[0].name;
+          const LABELS   = { hot: 'Caliente 🔥', warm: 'Tibio 🌡', cold: 'Frío ❄️' };
+          const now      = new Date().toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+          // Update "Temperatura" column (col 6) and timestamp (new col 9 if exists, else col 8)
+          await sheetsService.updateCell(cfg, sheetTab, lead.sheet_row_index, 6, LABELS[temperature]);
+          // Color the full row
+          await sheetsService.colorRowByTemperature(cfg, sheetTab, lead.sheet_row_index, temperature);
+          logger.sheet(`Lead ${lead.phone} → temperatura "${temperature}" sincronizada (fila ${lead.sheet_row_index})`);
+        } catch (e) {
+          logger.warn(`Sheets temperature sync failed: ${e.message}`);
+        }
+      })();
+    }
+
+    res.json(lead);
+  } catch (err) {
+    console.error('Lead temperature PATCH error:', err);
+    res.status(500).json({ message: 'Error al actualizar temperatura' });
   }
 });
 

@@ -120,6 +120,8 @@ export const api = {
     delete: (id: string) => request(`/leads/${id}`, { method: 'DELETE' }),
     updatePhone: (id: string, phone: string) =>
       request<Lead>(`/leads/${id}/phone`, { method: 'PATCH', body: JSON.stringify({ phone }) }),
+    updateTemperature: (id: string, temperature: 'cold' | 'warm' | 'hot') =>
+      request<Lead>(`/leads/${id}/temperature`, { method: 'PATCH', body: JSON.stringify({ temperature }) }),
   },
 
   sheets: {
@@ -248,6 +250,8 @@ export interface Lead {
   status: 'new' | 'converted' | 'lost';
   ai_score: 'FRIO' | 'TIBIO' | 'CALIENTE' | null;
   ai_reason: string | null; ai_scored_at: string | null;
+  lead_temperature: 'cold' | 'warm' | 'hot' | null;
+  temperature_updated_at: string | null;
   received_at: string; converted_at: string | null; sheet_row_index: number | null;
   message_count?: number;
 }
@@ -285,6 +289,7 @@ export interface OnboardingStatus {
 export interface Conversation {
   id: string; phone: string; name: string | null;
   ai_score: 'FRIO' | 'TIBIO' | 'CALIENTE' | null;
+  lead_temperature: 'cold' | 'warm' | 'hot' | null;
   status: 'new' | 'converted' | 'lost';
   campaign_id: string | null; campaign_name: string | null; campaign_color: string | null;
   last_message: string | null; last_from_me: boolean | null; last_message_at: string | null;
