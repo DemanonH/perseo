@@ -169,9 +169,10 @@ router.post('/meta/disconnect', auth, async (req, res) => {
   }
 });
 
-// ─── Embedded Signup: auto-detect WABA + phone from user access token ─────────
+// ─── Embedded Signup: exchange code OR use access_token, then auto-detect ────
 router.post('/meta/embedded-signup', auth, async (req, res) => {
   const https = require('https');
+  const logger = require('../lib/logger');
 
   function graphGet(path) {
     return new Promise((resolve, reject) => {
@@ -185,13 +186,49 @@ router.post('/meta/embedded-signup', auth, async (req, res) => {
   }
 
   try {
-    const { access_token } = req.body;
-    if (!access_token) return res.status(400).json({ message: 'access_token es requerido' });
+    const { access_token, code, redirect_uri } = req.body;
+
+    let token = access_token;
+
+    // ── Exchange code for token if provided ──────────────────────────────
+    if (code && !token) {
+      const appId     = process.env.META_APP_ID;
+      const appSecret = process.env.META_APP_SECRET;
+
+      logger.wa(`[EmbeddedSignup] Exchanging code for token (app ${appId?.slice(0,8)}…)`);
+
+      if (!appId || !appSecret) {
+        logger.warn('[EmbeddedSignup] META_APP_ID or META_APP_SECRET not set — cannot exchange code');
+        return res.status(500).json({
+          message: 'El servidor no tiene META_APP_ID / META_APP_SECRET configurados. Contactá al administrador.',
+          needs_manual: true,
+        });
+      }
+
+      const callbackUrl = redirect_uri || `${process.env.APP_URL || 'http://localhost:3000'}/auth/meta/callback`;
+      const tokenPath   = `/v22.0/oauth/access_token?client_id=${encodeURIComponent(appId)}&client_secret=${encodeURIComponent(appSecret)}&redirect_uri=${encodeURIComponent(callbackUrl)}&code=${encodeURIComponent(code)}`;
+      const tokenRes    = await graphGet(tokenPath);
+
+      logger.wa(`[EmbeddedSignup] Token exchange response: ${JSON.stringify(tokenRes).slice(0,120)}`);
+
+      if (tokenRes.error) {
+        return res.status(400).json({
+          message: `Error al intercambiar código con Meta: ${tokenRes.error.message || JSON.stringify(tokenRes.error)}`,
+          needs_manual: true,
+        });
+      }
+      token = tokenRes.access_token;
+    }
+
+    if (!token) return res.status(400).json({ message: 'access_token o code son requeridos' });
 
     // 1. Get user's WhatsApp Business Accounts
+    logger.wa(`[EmbeddedSignup] Fetching WABA accounts…`);
     const wabaRes = await graphGet(
-      `/v22.0/me/whatsapp_business_accounts?fields=id,name,phone_numbers%7Bid,display_phone_number,verified_name,code_verification_status%7D&access_token=${encodeURIComponent(access_token)}`
+      `/v22.0/me/whatsapp_business_accounts?fields=id,name,phone_numbers%7Bid,display_phone_number,verified_name,code_verification_status%7D&access_token=${encodeURIComponent(token)}`
     );
+
+    logger.wa(`[EmbeddedSignup] WABA response: ${JSON.stringify(wabaRes).slice(0, 200)}`);
 
     if (wabaRes.error) {
       return res.status(400).json({
@@ -212,41 +249,46 @@ router.post('/meta/embedded-signup', auth, async (req, res) => {
     }));
 
     if (!accounts.length) {
+      logger.warn('[EmbeddedSignup] No WABA accounts found for this token');
       return res.json({
         success:      false,
         needs_manual: true,
         message:      'No se encontraron cuentas de WhatsApp Business. Ingresá los datos manualmente.',
-        access_token,
+        access_token: token,
       });
     }
 
     // Count total phone lines
     const allPhones = accounts.flatMap(a => a.phones.map(p => ({ ...p, waba_id: a.waba_id, waba_name: a.waba_name })));
+    logger.wa(`[EmbeddedSignup] Found ${accounts.length} WABA(s), ${allPhones.length} phone(s)`);
 
     if (allPhones.length === 1) {
       // Auto-connect the only phone
       const p = allPhones[0];
+      logger.wa(`[EmbeddedSignup] Auto-connecting: ${p.phone_number} (${p.phone_number_id})`);
       const { upsertSession } = require('../services/metaWhatsapp');
       const session = await upsertSession(req.userId, req.workspaceId, {
         phoneNumberId: p.phone_number_id,
         wabaId:        p.waba_id,
-        accessToken:   access_token,
+        accessToken:   token,
         phoneNumber:   p.phone_number,
         displayName:   p.verified_name || p.waba_name,
       });
+      logger.wa(`[EmbeddedSignup] Session saved: ${session.id}`);
       return res.json({ success: true, auto_connected: true, session });
     }
 
     // Multiple phones — return list for user to pick
+    logger.wa(`[EmbeddedSignup] Multiple phones found — returning for selection`);
     return res.json({
       success:          false,
       needs_selection:  true,
-      access_token,
+      access_token:     token,
       accounts,
     });
 
   } catch (err) {
-    console.error('Meta embedded-signup error:', err);
+    console.error('[EmbeddedSignup] error:', err);
     res.status(500).json({ message: 'Error en la autenticación con Meta: ' + err.message, needs_manual: true });
   }
 });

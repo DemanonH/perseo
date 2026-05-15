@@ -70,8 +70,8 @@ export const api = {
         request<{ success: boolean; session: MetaSession }>('/whatsapp/meta/connect', { method: 'POST', body: JSON.stringify(data) }),
       status: () => request<{ connected: boolean; session: MetaSession | null }>('/whatsapp/meta/status'),
       disconnect: () => request<{ success: boolean }>('/whatsapp/meta/disconnect', { method: 'POST' }),
-      embeddedSignup: (access_token: string) =>
-        request<EmbeddedSignupResult>('/whatsapp/meta/embedded-signup', { method: 'POST', body: JSON.stringify({ access_token }) }),
+      embeddedSignup: (params: { access_token?: string; code?: string; redirect_uri?: string }) =>
+        request<EmbeddedSignupResult>('/whatsapp/meta/embedded-signup', { method: 'POST', body: JSON.stringify(params) }),
       selectPhone: (data: { phone_number_id: string; waba_id: string; access_token: string; phone_number?: string; display_name?: string }) =>
         request<{ success: boolean; session: MetaSession }>('/whatsapp/meta/select-phone', { method: 'POST', body: JSON.stringify(data) }),
     },
