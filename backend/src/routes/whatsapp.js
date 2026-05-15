@@ -169,4 +169,108 @@ router.post('/meta/disconnect', auth, async (req, res) => {
   }
 });
 
+// ─── Embedded Signup: auto-detect WABA + phone from user access token ─────────
+router.post('/meta/embedded-signup', auth, async (req, res) => {
+  const https = require('https');
+
+  function graphGet(path) {
+    return new Promise((resolve, reject) => {
+      const req2 = https.request(
+        { hostname: 'graph.facebook.com', path, method: 'GET' },
+        (r) => { let d = ''; r.on('data', c => { d += c; }); r.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve({}); } }); }
+      );
+      req2.on('error', reject);
+      req2.end();
+    });
+  }
+
+  try {
+    const { access_token } = req.body;
+    if (!access_token) return res.status(400).json({ message: 'access_token es requerido' });
+
+    // 1. Get user's WhatsApp Business Accounts
+    const wabaRes = await graphGet(
+      `/v22.0/me/whatsapp_business_accounts?fields=id,name,phone_numbers%7Bid,display_phone_number,verified_name,code_verification_status%7D&access_token=${encodeURIComponent(access_token)}`
+    );
+
+    if (wabaRes.error) {
+      return res.status(400).json({
+        message: wabaRes.error.message || 'Error consultando Meta Graph API',
+        needs_manual: true,
+      });
+    }
+
+    const accounts = (wabaRes.data || []).map(waba => ({
+      waba_id:   waba.id,
+      waba_name: waba.name,
+      phones: (waba.phone_numbers?.data || []).map(p => ({
+        phone_number_id:   p.id,
+        phone_number:      p.display_phone_number,
+        verified_name:     p.verified_name,
+        verified: p.code_verification_status === 'VERIFIED',
+      })),
+    }));
+
+    if (!accounts.length) {
+      return res.json({
+        success:      false,
+        needs_manual: true,
+        message:      'No se encontraron cuentas de WhatsApp Business. Ingresá los datos manualmente.',
+        access_token,
+      });
+    }
+
+    // Count total phone lines
+    const allPhones = accounts.flatMap(a => a.phones.map(p => ({ ...p, waba_id: a.waba_id, waba_name: a.waba_name })));
+
+    if (allPhones.length === 1) {
+      // Auto-connect the only phone
+      const p = allPhones[0];
+      const { upsertSession } = require('../services/metaWhatsapp');
+      const session = await upsertSession(req.userId, req.workspaceId, {
+        phoneNumberId: p.phone_number_id,
+        wabaId:        p.waba_id,
+        accessToken:   access_token,
+        phoneNumber:   p.phone_number,
+        displayName:   p.verified_name || p.waba_name,
+      });
+      return res.json({ success: true, auto_connected: true, session });
+    }
+
+    // Multiple phones — return list for user to pick
+    return res.json({
+      success:          false,
+      needs_selection:  true,
+      access_token,
+      accounts,
+    });
+
+  } catch (err) {
+    console.error('Meta embedded-signup error:', err);
+    res.status(500).json({ message: 'Error en la autenticación con Meta: ' + err.message, needs_manual: true });
+  }
+});
+
+// ─── Connect a selected phone after embedded signup ───────────────────────────
+router.post('/meta/select-phone', auth, async (req, res) => {
+  try {
+    const { phone_number_id, waba_id, access_token, phone_number, display_name } = req.body;
+    if (!phone_number_id || !waba_id || !access_token) {
+      return res.status(400).json({ message: 'phone_number_id, waba_id y access_token son requeridos' });
+    }
+    const { upsertSession } = require('../services/metaWhatsapp');
+    const session = await upsertSession(req.userId, req.workspaceId, {
+      phoneNumberId: phone_number_id,
+      wabaId:        waba_id,
+      accessToken:   access_token,
+      phoneNumber:   phone_number,
+      displayName:   display_name,
+    });
+    res.json({ success: true, session });
+  } catch (err) {
+    console.error('Meta select-phone error:', err);
+    res.status(500).json({ message: 'Error al conectar el número: ' + err.message });
+  }
+});
+
 module.exports = router;

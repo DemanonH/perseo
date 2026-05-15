@@ -70,6 +70,10 @@ export const api = {
         request<{ success: boolean; session: MetaSession }>('/whatsapp/meta/connect', { method: 'POST', body: JSON.stringify(data) }),
       status: () => request<{ connected: boolean; session: MetaSession | null }>('/whatsapp/meta/status'),
       disconnect: () => request<{ success: boolean }>('/whatsapp/meta/disconnect', { method: 'POST' }),
+      embeddedSignup: (access_token: string) =>
+        request<EmbeddedSignupResult>('/whatsapp/meta/embedded-signup', { method: 'POST', body: JSON.stringify({ access_token }) }),
+      selectPhone: (data: { phone_number_id: string; waba_id: string; access_token: string; phone_number?: string; display_name?: string }) =>
+        request<{ success: boolean; session: MetaSession }>('/whatsapp/meta/select-phone', { method: 'POST', body: JSON.stringify(data) }),
     },
     dialog360: {
       connectUrl: () => request<{ url: string }>('/whatsapp/dialog360/connect-url'),
@@ -279,6 +283,27 @@ export interface Dialog360Session {
 export interface MetaSession {
   id: string; phone_number_id: string; phone_number: string | null;
   display_name: string | null; waba_id?: string; is_active: boolean; created_at: string;
+}
+
+export interface EmbeddedSignupPhone {
+  phone_number_id: string; phone_number: string; verified_name: string; verified: boolean;
+  waba_id: string; waba_name: string;
+}
+
+export interface EmbeddedSignupAccount {
+  waba_id: string; waba_name: string;
+  phones: Omit<EmbeddedSignupPhone, 'waba_id' | 'waba_name'>[];
+}
+
+export interface EmbeddedSignupResult {
+  success: boolean;
+  auto_connected?: boolean;
+  needs_manual?: boolean;
+  needs_selection?: boolean;
+  session?: MetaSession;
+  accounts?: EmbeddedSignupAccount[];
+  access_token?: string;
+  message?: string;
 }
 
 export interface OnboardingStatus {
