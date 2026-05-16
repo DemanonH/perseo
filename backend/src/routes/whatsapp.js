@@ -223,30 +223,42 @@ router.post('/meta/embedded-signup', auth, async (req, res) => {
     if (!token) return res.status(400).json({ message: 'access_token o code son requeridos' });
 
     // 1. Get user's WhatsApp Business Accounts
-    logger.wa(`[EmbeddedSignup] Fetching WABA accounts…`);
-    const wabaRes = await graphGet(
-      `/v22.0/me/whatsapp_business_accounts?fields=id,name,phone_numbers%7Bid,display_phone_number,verified_name,code_verification_status%7D&access_token=${encodeURIComponent(token)}`
+    // With standard Facebook OAuth (not Embedded Signup) the correct path is
+    // /me/businesses → owned_whatsapp_business_accounts.
+    // The old /me/whatsapp_business_accounts edge only works with System User tokens.
+    logger.wa(`[EmbeddedSignup] Fetching WABA accounts via /me/businesses…`);
+
+    const phoneFields = 'id,display_phone_number,verified_name,code_verification_status';
+    const wabaFields  = `id,name,phone_numbers{${phoneFields}}`;
+    const bizRes = await graphGet(
+      `/v22.0/me/businesses?fields=id,name,owned_whatsapp_business_accounts{${wabaFields}}&access_token=${encodeURIComponent(token)}`
     );
 
-    logger.wa(`[EmbeddedSignup] WABA response: ${JSON.stringify(wabaRes).slice(0, 200)}`);
+    logger.wa(`[EmbeddedSignup] Businesses response: ${JSON.stringify(bizRes).slice(0, 300)}`);
 
-    if (wabaRes.error) {
+    if (bizRes.error) {
       return res.status(400).json({
-        message: wabaRes.error.message || 'Error consultando Meta Graph API',
+        message: bizRes.error.message || 'Error consultando Meta Graph API',
         needs_manual: true,
       });
     }
 
-    const accounts = (wabaRes.data || []).map(waba => ({
-      waba_id:   waba.id,
-      waba_name: waba.name,
-      phones: (waba.phone_numbers?.data || []).map(p => ({
-        phone_number_id:   p.id,
-        phone_number:      p.display_phone_number,
-        verified_name:     p.verified_name,
-        verified: p.code_verification_status === 'VERIFIED',
-      })),
-    }));
+    // Flatten: business[] → waba[] → phone[]
+    const accounts = [];
+    for (const biz of (bizRes.data || [])) {
+      for (const waba of (biz.owned_whatsapp_business_accounts?.data || [])) {
+        accounts.push({
+          waba_id:   waba.id,
+          waba_name: waba.name || biz.name,
+          phones: (waba.phone_numbers?.data || []).map(p => ({
+            phone_number_id: p.id,
+            phone_number:    p.display_phone_number,
+            verified_name:   p.verified_name,
+            verified:        p.code_verification_status === 'VERIFIED',
+          })),
+        });
+      }
+    }
 
     if (!accounts.length) {
       logger.warn('[EmbeddedSignup] No WABA accounts found for this token');
