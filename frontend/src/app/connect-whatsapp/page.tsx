@@ -23,26 +23,18 @@ type Step =
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function buildOAuthUrl(redirectUri: string, state: string): string {
-  // Always include extras.setup={} so Meta shows BOTH "create new" and "connect existing WABA" options.
-  // config_id alone locks the flow to "create new" only — extras overrides that restriction.
-  const extras = JSON.stringify({
-    feature:            'whatsapp_embedded_signup',
-    setup:              {},          // empty = allow create new OR connect existing
-    sessionInfoVersion: '3',
-  });
-
+  // Standard Facebook Login OAuth — does NOT require BSP/TP status.
+  // Embedded Signup (config_id / extras.feature=whatsapp_embedded_signup) is
+  // restricted to approved BSPs/TPs only; we use plain OAuth until approved.
+  // The backend handles code → token exchange and WABA auto-detection regardless.
   const p = new URLSearchParams({
-    client_id:                      META_APP_ID,
-    redirect_uri:                   redirectUri,
-    response_type:                  'code',
-    override_default_response_type: 'true',
+    client_id:     META_APP_ID,
+    redirect_uri:  redirectUri,
+    response_type: 'code',
+    scope:         'whatsapp_business_management,whatsapp_business_messaging,business_management',
     state,
-    extras,
-    ...(META_CONFIG_ID
-      ? { config_id: META_CONFIG_ID }                                // Meta-hosted EBS UI
-      : { scope: 'whatsapp_business_management,whatsapp_business_messaging' }),
   });
-  console.log('[ConnectWA] OAuth URL params:', Object.fromEntries(p));
+  console.log('[ConnectWA] OAuth URL:', `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth?${p.toString()}`);
   return `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth?${p.toString()}`;
 }
 
