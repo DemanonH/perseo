@@ -65,6 +65,21 @@ async function createTemplate(wabaId, accessToken, templateData) {
   return _graphPost(`/${GRAPH_VERSION}/${wabaId}/message_templates`, accessToken, payload);
 }
 
+/**
+ * Suscribir la app al WABA para recibir webhooks de mensajes.
+ * Debe llamarse tras conectar/reconectar una sesión Meta.
+ */
+async function subscribeWaba(wabaId, accessToken) {
+  logger.wa(`[Meta] Suscribiendo app al WABA ${wabaId}…`);
+  const result = await _graphPost(`/${GRAPH_VERSION}/${wabaId}/subscribed_apps`, accessToken, '{}');
+  if (result.success === true) {
+    logger.ok(`[Meta] App suscrita al WABA ${wabaId} ✓`);
+  } else {
+    logger.warn(`[Meta] subscribed_apps response: ${JSON.stringify(result)}`);
+  }
+  return result;
+}
+
 function _graphGet(path, accessToken) {
   return new Promise((resolve, reject) => {
     const options = {
@@ -122,4 +137,4 @@ function _graphPost(path, accessToken, payload) {
   });
 }
 
-module.exports = { sendTextMessage, getActiveSession, upsertSession, getTemplates, createTemplate };
+module.exports = { sendTextMessage, getActiveSession, upsertSession, getTemplates, createTemplate, subscribeWaba };

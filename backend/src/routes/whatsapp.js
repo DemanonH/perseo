@@ -133,7 +133,7 @@ router.post('/meta/connect', auth, async (req, res) => {
     if (!phone_number_id || !waba_id || !access_token) {
       return res.status(400).json({ message: 'phone_number_id, waba_id y access_token son obligatorios' });
     }
-    const { upsertSession } = require('../services/metaWhatsapp');
+    const { upsertSession, subscribeWaba } = require('../services/metaWhatsapp');
     const session = await upsertSession(req.userId, req.workspaceId, {
       phoneNumberId: phone_number_id,
       wabaId: waba_id,
@@ -141,6 +141,10 @@ router.post('/meta/connect', auth, async (req, res) => {
       phoneNumber: phone_number,
       displayName: display_name,
     });
+    // Suscribir la app al WABA para recibir webhooks de mensajes entrantes
+    try { await subscribeWaba(waba_id, access_token); } catch (e) {
+      console.warn('[Meta] subscribeWaba warning:', e.message);
+    }
     res.json({ success: true, session: { id: session.id, phone_number_id: session.phone_number_id, display_name: session.display_name } });
   } catch (err) {
     console.error('Meta connect error:', err);
@@ -278,7 +282,7 @@ router.post('/meta/embedded-signup', auth, async (req, res) => {
       // Auto-connect the only phone
       const p = allPhones[0];
       logger.wa(`[EmbeddedSignup] Auto-connecting: ${p.phone_number} (${p.phone_number_id})`);
-      const { upsertSession } = require('../services/metaWhatsapp');
+      const { upsertSession, subscribeWaba } = require('../services/metaWhatsapp');
       const session = await upsertSession(req.userId, req.workspaceId, {
         phoneNumberId: p.phone_number_id,
         wabaId:        p.waba_id,
@@ -287,6 +291,10 @@ router.post('/meta/embedded-signup', auth, async (req, res) => {
         displayName:   p.verified_name || p.waba_name,
       });
       logger.wa(`[EmbeddedSignup] Session saved: ${session.id}`);
+      // Suscribir la app al WABA para recibir webhooks de mensajes entrantes
+      try { await subscribeWaba(p.waba_id, token); } catch (e) {
+        logger.warn(`[EmbeddedSignup] subscribeWaba warning: ${e.message}`);
+      }
       return res.json({ success: true, auto_connected: true, session });
     }
 
@@ -312,7 +320,7 @@ router.post('/meta/select-phone', auth, async (req, res) => {
     if (!phone_number_id || !waba_id || !access_token) {
       return res.status(400).json({ message: 'phone_number_id, waba_id y access_token son requeridos' });
     }
-    const { upsertSession } = require('../services/metaWhatsapp');
+    const { upsertSession, subscribeWaba } = require('../services/metaWhatsapp');
     const session = await upsertSession(req.userId, req.workspaceId, {
       phoneNumberId: phone_number_id,
       wabaId:        waba_id,
@@ -320,6 +328,10 @@ router.post('/meta/select-phone', auth, async (req, res) => {
       phoneNumber:   phone_number,
       displayName:   display_name,
     });
+    // Suscribir la app al WABA para recibir webhooks de mensajes entrantes
+    try { await subscribeWaba(waba_id, access_token); } catch (e) {
+      console.warn('[Meta] subscribeWaba warning:', e.message);
+    }
     res.json({ success: true, session });
   } catch (err) {
     console.error('Meta select-phone error:', err);
