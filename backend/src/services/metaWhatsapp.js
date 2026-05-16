@@ -6,18 +6,38 @@ const logger = require('../lib/logger');
 const GRAPH_VERSION = 'v22.0';
 
 /**
+ * Normaliza números de teléfono argentinos.
+ * Meta deprecó el prefijo "9" móvil en Argentina:
+ * 5491132012067 → 541132012067
+ */
+function _normalizePhone(phone) {
+  // Remove any leading +
+  const clean = phone.replace(/^\+/, '');
+  // Argentina: 549 + area + number → 54 + area + number
+  // e.g. 5491132012067 → 541132012067
+  if (/^549\d{10}$/.test(clean)) {
+    return '54' + clean.slice(3);
+  }
+  return clean;
+}
+
+/**
  * Enviar mensaje de texto via Meta WhatsApp Cloud API
  */
 async function sendTextMessage(phoneNumberId, accessToken, toPhone, text) {
+  const normalized = _normalizePhone(toPhone);
+  if (normalized !== toPhone.replace(/^\+/, '')) {
+    logger.wa(`[Meta] Normalized phone: ${toPhone} → ${normalized}`);
+  }
   const payload = JSON.stringify({
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
-    to: toPhone,
+    to: normalized,
     type: 'text',
     text: { preview_url: false, body: text },
   });
 
-  logger.wa(`[Meta] → ${toPhone}: "${text.slice(0, 60)}"`);
+  logger.wa(`[Meta] → ${normalized}: "${text.slice(0, 60)}"`);
   return _graphPost(`/${GRAPH_VERSION}/${phoneNumberId}/messages`, accessToken, payload);
 }
 
