@@ -23,20 +23,24 @@ type Step =
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function buildOAuthUrl(redirectUri: string, state: string): string {
-  // Use Meta-hosted Embedded Signup (config_id) when available — the modern approach.
-  // config_id replaces scope + extras.feature and enables the full Meta-hosted onboarding flow.
+  // Always include extras.setup={} so Meta shows BOTH "create new" and "connect existing WABA" options.
+  // config_id alone locks the flow to "create new" only — extras overrides that restriction.
+  const extras = JSON.stringify({
+    feature:            'whatsapp_embedded_signup',
+    setup:              {},          // empty = allow create new OR connect existing
+    sessionInfoVersion: '3',
+  });
+
   const p = new URLSearchParams({
     client_id:                      META_APP_ID,
     redirect_uri:                   redirectUri,
     response_type:                  'code',
     override_default_response_type: 'true',
     state,
+    extras,
     ...(META_CONFIG_ID
-      ? { config_id: META_CONFIG_ID }
-      : {
-          scope:  'whatsapp_business_management,whatsapp_business_messaging',
-          extras: JSON.stringify({ feature: 'whatsapp_embedded_signup', setup: {}, sessionInfoVersion: '3' }),
-        }),
+      ? { config_id: META_CONFIG_ID }                                // Meta-hosted EBS UI
+      : { scope: 'whatsapp_business_management,whatsapp_business_messaging' }),
   });
   console.log('[ConnectWA] OAuth URL params:', Object.fromEntries(p));
   return `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth?${p.toString()}`;
