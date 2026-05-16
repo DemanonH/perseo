@@ -226,6 +226,24 @@ router.post('/meta/embedded-signup', auth, async (req, res) => {
 
     if (!token) return res.status(400).json({ message: 'access_token o code son requeridos' });
 
+    // ── Exchange for long-lived token (60 days) ──────────────────────────
+    const appId     = process.env.META_APP_ID;
+    const appSecret = process.env.META_APP_SECRET;
+    if (appId && appSecret) {
+      const llPath = `/v22.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${encodeURIComponent(appId)}&client_secret=${encodeURIComponent(appSecret)}&fb_exchange_token=${encodeURIComponent(token)}`;
+      try {
+        const llRes = await graphGet(llPath);
+        if (llRes.access_token) {
+          logger.wa(`[EmbeddedSignup] Upgraded to long-lived token (expires_in=${llRes.expires_in}s)`);
+          token = llRes.access_token;
+        } else {
+          logger.warn('[EmbeddedSignup] Long-lived token exchange failed:', JSON.stringify(llRes).slice(0,120));
+        }
+      } catch (e) {
+        logger.warn('[EmbeddedSignup] Long-lived token exchange error:', e.message);
+      }
+    }
+
     // 1. Get user's WhatsApp Business Accounts
     // With standard Facebook OAuth (not Embedded Signup) the correct path is
     // /me/businesses → owned_whatsapp_business_accounts.
