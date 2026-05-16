@@ -64,24 +64,73 @@ export default function InboxPage() {
   const [sendError, setSendError] = useState('');
   const [search, setSearch] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const selectedIdRef = useRef<string | null>(null);
+  selectedIdRef.current = selectedId;
+
+  // Helper: check if user is near bottom of messages container
+  function isNearBottom() {
+    const el = messagesContainerRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }
+
+  function scrollToBottom(smooth = true) {
+    bottomRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'instant' });
+  }
 
   useEffect(() => {
     if (!localStorage.getItem('perseo_token')) { router.push('/login'); return; }
     loadConversations('');
   }, []);
 
+  // Debounced search
   useEffect(() => {
     const t = setTimeout(() => loadConversations(search), 300);
     return () => clearTimeout(t);
   }, [search]);
 
+  // Load messages when conversation changes
   useEffect(() => {
     if (selectedId) loadMessages(selectedId);
   }, [selectedId]);
 
+  // Scroll to bottom only when initially loading messages or sending
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (loadingMsgs) return; // wait until loaded
+    scrollToBottom();
+  }, [loadingMsgs]);
+
+  // Poll for new messages in active conversation every 3s
+  useEffect(() => {
+    if (!selectedId) return;
+    const interval = setInterval(async () => {
+      const id = selectedIdRef.current;
+      if (!id) return;
+      try {
+        const data = await api.inbox.messages(id);
+        setMessages(prev => {
+          if (data.messages.length <= prev.length) return prev; // nothing new
+          const atBottom = isNearBottom();
+          // Schedule scroll after render if user was at bottom
+          if (atBottom) setTimeout(() => scrollToBottom(false), 50);
+          return data.messages;
+        });
+      } catch {}
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [selectedId]);
+
+  // Poll conversation list every 5s (silent, no loading spinner)
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const data = await api.inbox.conversations(search ? { search } : {});
+        setConversations(data.conversations);
+      } catch {}
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [search]);
 
   async function loadConversations(q: string) {
     setLoadingConvs(true);
@@ -239,7 +288,7 @@ export default function InboxPage() {
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto px-6 py-4">
+            <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-6 py-4">
               {loadingMsgs ? (
                 <div className="flex items-center justify-center h-full"><p className="text-white/30 text-sm">Cargando...</p></div>
               ) : messages.length === 0 ? (
