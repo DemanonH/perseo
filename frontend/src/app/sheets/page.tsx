@@ -13,6 +13,7 @@ export default function SheetsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState<'success' | 'error'>('success');
 
@@ -54,6 +55,22 @@ export default function SheetsPage() {
     } catch (err) {
       setMessage((err as Error).message);
       setMessageType('error');
+    }
+  }
+
+  async function handleDisconnect() {
+    if (!confirm('¿Desconectar Google Sheets? Perseo dejará de registrar leads en tu spreadsheet.')) return;
+    setDisconnecting(true);
+    try {
+      await api.sheets.disconnect();
+      setIsConnected(false);
+      setMessage('Google Sheets desconectado correctamente');
+      setMessageType('success');
+    } catch (err) {
+      setMessage((err as Error).message);
+      setMessageType('error');
+    } finally {
+      setDisconnecting(false);
     }
   }
 
@@ -140,12 +157,23 @@ export default function SheetsPage() {
                 <p className="text-xs text-white/40 mb-4">
                   Otorgá permisos para que Perseo pueda escribir en tu spreadsheet. Solo se pide acceso a Sheets.
                 </p>
-                <button
-                  onClick={handleAuth}
-                  className="w-full bg-[#F5A623] hover:bg-[#d4880a] text-black font-bold py-2.5 rounded-xl transition-all text-sm"
-                >
-                  {isConnected ? 'Reconectar con Google' : 'Autorizar con Google'}
-                </button>
+                <div className={`flex gap-3 ${isConnected ? '' : ''}`}>
+                  <button
+                    onClick={handleAuth}
+                    className="flex-1 bg-[#F5A623] hover:bg-[#d4880a] text-black font-bold py-2.5 rounded-xl transition-all text-sm"
+                  >
+                    {isConnected ? 'Reconectar con Google' : 'Autorizar con Google'}
+                  </button>
+                  {isConnected && (
+                    <button
+                      onClick={handleDisconnect}
+                      disabled={disconnecting}
+                      className="px-4 py-2.5 rounded-xl border border-red-500/30 text-red-400 hover:bg-red-500/10 text-sm font-medium transition-all disabled:opacity-50"
+                    >
+                      {disconnecting ? '...' : 'Desconectar'}
+                    </button>
+                  )}
+                </div>
               </div>
 
               {isConnected && currentId && (

@@ -119,6 +119,21 @@ router.get('/status', auth, async (req, res) => {
   }
 });
 
+router.post('/disconnect', auth, async (req, res) => {
+  try {
+    await query(
+      `UPDATE google_sheets_config
+       SET is_connected = false, access_token = NULL, refresh_token = NULL
+       WHERE workspace_id = $1`,
+      [req.workspaceId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Sheets disconnect error:', err);
+    res.status(500).json({ message: 'Error al desconectar Google Sheets' });
+  }
+});
+
 router.post('/test', auth, async (req, res) => {
   try {
     const config = await query(

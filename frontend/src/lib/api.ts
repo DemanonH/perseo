@@ -134,6 +134,7 @@ export const api = {
       request('/sheets/connect', { method: 'POST', body: JSON.stringify({ spreadsheet_id }) }),
     status: () => request<{ is_connected: boolean; spreadsheet_id: string | null }>('/sheets/status'),
     test: () => request('/sheets/test', { method: 'POST' }),
+    disconnect: () => request('/sheets/disconnect', { method: 'POST' }),
   },
 
   billing: {
