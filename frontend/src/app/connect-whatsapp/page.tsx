@@ -1,185 +1,144 @@
 'use client';
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/layout/Sidebar';
 import { api, MetaSession, EmbeddedSignupAccount } from '@/lib/api';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
-const META_APP_ID      = process.env.NEXT_PUBLIC_META_APP_ID    || '1312384980822827';
-const META_CONFIG_ID   = process.env.NEXT_PUBLIC_META_CONFIG_ID || '965883536321565';
-const POPUP_W          = 660;
-const POPUP_H          = 700;
-const GRAPH_VERSION    = 'v22.0';
+const META_APP_ID    = process.env.NEXT_PUBLIC_META_APP_ID    || '1312384980822827';
+const META_CONFIG_ID = process.env.NEXT_PUBLIC_META_CONFIG_ID || '1600041351089933';
+
+// ─── FB SDK types ─────────────────────────────────────────────────────────────
+declare global {
+  interface Window {
+    fbAsyncInit?: () => void;
+    FB?: {
+      init: (params: {
+        appId: string; cookie: boolean; xfbml: boolean; version: string;
+      }) => void;
+      login: (
+        callback: (response: {
+          status: string;
+          authResponse?: { code?: string; accessToken?: string };
+        }) => void,
+        options: {
+          config_id: string;
+          response_type: string;
+          override_default_response_type: boolean;
+          extras?: Record<string, unknown>;
+        }
+      ) => void;
+    };
+  }
+}
 
 // ─── State machine ────────────────────────────────────────────────────────────
 type Step =
   | { kind: 'idle' }
-  | { kind: 'opening' }
-  | { kind: 'waiting' }                                                  // popup open, waiting for callback
-  | { kind: 'processing'; label: string }                                // calling our backend
+  | { kind: 'waiting' }
+  | { kind: 'processing'; label: string }
   | { kind: 'pick_phone'; accounts: EmbeddedSignupAccount[]; token: string }
   | { kind: 'connected'; session: MetaSession }
   | { kind: 'manual'; prefillToken?: string };
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-function buildOAuthUrl(redirectUri: string, state: string): string {
-  // Standard Facebook Login OAuth — does NOT require BSP/TP status.
-  // Embedded Signup (config_id / extras.feature=whatsapp_embedded_signup) is
-  // restricted to approved BSPs/TPs only; we use plain OAuth until approved.
-  // The backend handles code → token exchange and WABA auto-detection regardless.
-  const p = new URLSearchParams({
-    client_id:     META_APP_ID,
-    redirect_uri:  redirectUri,
-    response_type: 'code',
-    scope:         'whatsapp_business_management,whatsapp_business_messaging,business_management',
-    state,
-  });
-  console.log('[ConnectWA] OAuth URL:', `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth?${p.toString()}`);
-  return `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth?${p.toString()}`;
-}
-
-function openCenteredPopup(url: string): Window | null {
-  const left = window.screenX + Math.round((window.outerWidth  - POPUP_W) / 2);
-  const top  = window.screenY + Math.round((window.outerHeight - POPUP_H) / 2);
-  return window.open(
-    url,
-    'meta_embedded_signup',
-    `width=${POPUP_W},height=${POPUP_H},left=${left},top=${top},popup=1,scrollbars=yes,resizable=yes`
-  );
-}
-
-function randomState(): string {
-  return Array.from(crypto.getRandomValues(new Uint8Array(18)))
-    .map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 export default function ConnectWhatsAppPage() {
-  const router       = useRouter();
-  const searchParams = useSearchParams();
+  const router = useRouter();
 
-  const [step,      setStep]      = useState<Step>({ kind: 'idle' });
-  const [error,     setError]     = useState('');
-  const [saving,    setSaving]    = useState(false);
+  const [step,       setStep]      = useState<Step>({ kind: 'idle' });
+  const [error,      setError]     = useState('');
+  const [saving,     setSaving]    = useState(false);
+  const [fbReady,    setFbReady]   = useState(false);
   const [manualData, setManualData] = useState({
     phone_number_id: '', waba_id: '', access_token: '', phone_number: '', display_name: '',
   });
 
-  const popupRef    = useRef<Window | null>(null);
-  const pollRef     = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stateRef    = useRef('');
+  const initRef = useRef(false);
 
   // ── Auth guard + existing session ────────────────────────────────────────
   useEffect(() => {
     if (!localStorage.getItem('perseo_token')) { router.push('/login'); return; }
     api.whatsapp.meta.status()
-      .then(r => { if (r.session) { setStep({ kind: 'connected', session: r.session }); } })
+      .then(r => { if (r.session) setStep({ kind: 'connected', session: r.session }); })
       .catch(() => {});
   }, [router]);
 
-  // ── localStorage fallback (when popup wasn't really a popup) ─────────────
+  // ── Load Facebook JS SDK ─────────────────────────────────────────────────
   useEffect(() => {
-    const pending = localStorage.getItem('meta_oauth_pending');
-    if (pending) {
-      localStorage.removeItem('meta_oauth_pending');
-      try {
-        const data = JSON.parse(pending) as { type: string; code?: string; state?: string; message?: string };
-        if (data.type === 'meta_oauth_code' && data.code) {
-          console.log('[ConnectWA] localStorage fallback — processing pending code');
-          void processCode(data.code);
-        } else if (data.type === 'meta_oauth_error') {
-          setError(data.message || 'Error en la autenticación con Meta.');
-        }
-      } catch {}
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (initRef.current) return;
+    initRef.current = true;
 
-  // ── Listen for postMessage from callback popup ────────────────────────────
-  useEffect(() => {
-    function onMessage(e: MessageEvent) {
-      // Only accept messages from our own origin
-      if (e.origin !== window.location.origin) return;
+    window.fbAsyncInit = function () {
+      window.FB!.init({
+        appId:   META_APP_ID,
+        cookie:  true,
+        xfbml:   false,
+        version: 'v22.0',
+      });
+      setFbReady(true);
+      console.log('[ConnectWA] FB SDK ready');
+    };
 
-      const data = e.data as { type?: string; code?: string; state?: string; message?: string };
-      if (!data?.type) return;
-
-      console.log('[ConnectWA] postMessage received:', data.type);
-
-      clearPoll();
-
-      if (data.type === 'meta_oauth_code' && data.code) {
-        // Verify CSRF state
-        if (stateRef.current && data.state && data.state !== stateRef.current) {
-          console.error('[ConnectWA] State mismatch — possible CSRF');
-          setError('Error de seguridad (state mismatch). Intentá de nuevo.');
-          setStep({ kind: 'idle' });
-          return;
-        }
-        void processCode(data.code);
-      } else if (data.type === 'meta_oauth_error') {
-        setError(data.message || 'La autenticación con Meta falló.');
-        setStep({ kind: 'idle' });
+    // Inject SDK script once
+    if (!document.getElementById('facebook-jssdk')) {
+      const script = document.createElement('script');
+      script.id    = 'facebook-jssdk';
+      script.src   = 'https://connect.facebook.net/es_LA/sdk.js';
+      script.async = true;
+      script.defer = true;
+      document.body.appendChild(script);
+    } else {
+      // Already loaded (hot reload) — init manually if FB is already there
+      if (window.FB) {
+        window.FB.init({ appId: META_APP_ID, cookie: true, xfbml: false, version: 'v22.0' });
+        setFbReady(true);
       }
     }
+  }, []);
 
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── Core: open OAuth popup ────────────────────────────────────────────────
+  // ── Trigger FB.login() with Embedded Signup config_id ────────────────────
   const handleConnectFacebook = useCallback(() => {
     setError('');
 
-    if (!META_APP_ID) {
-      setError('NEXT_PUBLIC_META_APP_ID no está configurado.');
+    if (!window.FB) {
+      setError('El SDK de Facebook no cargó todavía. Esperá un momento y volvé a intentarlo.');
       return;
     }
 
-    const state       = randomState();
-    stateRef.current  = state;
-    const redirectUri = `${window.location.origin}/auth/meta/callback`;
-    const url         = buildOAuthUrl(redirectUri, state);
-
-    console.log('[ConnectWA] Opening OAuth popup:', url);
-    setStep({ kind: 'opening' });
-
-    const popup = openCenteredPopup(url);
-
-    if (!popup || popup.closed) {
-      setError('El popup fue bloqueado por el navegador. Habilitá los popups para este sitio e intentá de nuevo.');
-      setStep({ kind: 'idle' });
-      return;
-    }
-
-    popupRef.current = popup;
+    console.log('[ConnectWA] Launching FB.login() with config_id:', META_CONFIG_ID);
     setStep({ kind: 'waiting' });
 
-    // Poll every 600ms to detect manual close
-    pollRef.current = setInterval(() => {
-      if (popup.closed) {
-        clearPoll();
-        setStep(s => (s.kind === 'waiting' || s.kind === 'opening') ? { kind: 'idle' } : s);
-        console.log('[ConnectWA] Popup closed by user');
+    window.FB.login(
+      (response) => {
+        console.log('[ConnectWA] FB.login response status:', response.status);
+
+        if (response.authResponse?.code) {
+          console.log('[ConnectWA] Got authorization code — calling backend');
+          void processCode(response.authResponse.code);
+        } else {
+          console.warn('[ConnectWA] No auth code in response:', response);
+          setError('No se recibió autorización de Meta. Intentá de nuevo.');
+          setStep({ kind: 'idle' });
+        }
+      },
+      {
+        config_id:                    META_CONFIG_ID,
+        response_type:                'code',
+        override_default_response_type: true,
+        extras: { sessionInfoVersion: 2 },
       }
-    }, 600);
-  }, []);
+    );
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  function clearPoll() {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-    if (popupRef.current && !popupRef.current.closed) { try { popupRef.current.close(); } catch {} }
-  }
-
-  // ── Process the OAuth code via backend ────────────────────────────────────
+  // ── Send code to backend (no redirect_uri — FB SDK flow) ─────────────────
   async function processCode(code: string) {
-    const redirectUri = `${window.location.origin}/auth/meta/callback`;
-    console.log('[ConnectWA] Calling backend /meta/embedded-signup with code');
     setStep({ kind: 'processing', label: 'Verificando con Meta…' });
-
     try {
-      const result = await api.whatsapp.meta.embeddedSignup({ code, redirect_uri: redirectUri });
+      // No redirect_uri: FB.login() codes don't need it for token exchange
+      const result = await api.whatsapp.meta.embeddedSignup({ code });
 
       console.log('[ConnectWA] Backend result:', result.success, {
-        auto: result.auto_connected,
+        auto:   result.auto_connected,
         phones: result.accounts?.flatMap(a => a.phones).length,
         manual: result.needs_manual,
       });
@@ -192,7 +151,7 @@ export default function ConnectWhatsAppPage() {
         setStep({ kind: 'pick_phone', accounts: result.accounts, token: result.access_token! });
         return;
       }
-      // Fallback: manual with pre-filled token
+      // Fallback manual
       setManualData(d => ({ ...d, access_token: result.access_token || '' }));
       setStep({ kind: 'manual', prefillToken: result.access_token });
       if (result.message) setError(result.message);
@@ -203,7 +162,7 @@ export default function ConnectWhatsAppPage() {
     }
   }
 
-  // ── Select phone after picker ─────────────────────────────────────────────
+  // ── Select phone from picker ──────────────────────────────────────────────
   async function handleSelectPhone(
     phone_number_id: string, waba_id: string, access_token: string,
     phone_number: string, display_name: string
@@ -236,9 +195,7 @@ export default function ConnectWhatsAppPage() {
     finally { setSaving(false); }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  //  Sub-components
-  // ─────────────────────────────────────────────────────────────────────────
+  // ─── Sub-components ───────────────────────────────────────────────────────
   const Header = ({ title, sub }: { title: string; sub?: string }) => (
     <div className="text-center mb-6">
       <div className="w-12 h-12 bg-green-500/10 rounded-2xl flex items-center justify-center mx-auto mb-3">
@@ -283,10 +240,11 @@ export default function ConnectWhatsAppPage() {
 
                   <button
                     onClick={handleConnectFacebook}
-                    className="w-full bg-[#1877F2] hover:bg-[#1565d8] active:bg-[#1255c0] text-white font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2.5 select-none"
+                    disabled={!fbReady}
+                    className="w-full bg-[#1877F2] hover:bg-[#1565d8] active:bg-[#1255c0] text-white font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2.5 select-none disabled:opacity-60 disabled:cursor-wait"
                   >
                     <FbIcon />
-                    Conectar con Facebook
+                    {fbReady ? 'Conectar con Facebook' : 'Cargando SDK…'}
                   </button>
 
                   <div className="flex items-center gap-3">
@@ -303,10 +261,7 @@ export default function ConnectWhatsAppPage() {
                   </button>
 
                   <div className="grid grid-cols-2 gap-2 pt-1">
-                    {[
-                      'Sin escanear QR', 'No se desconecta',
-                      'Número real', 'API oficial Meta',
-                    ].map(t => (
+                    {['Sin escanear QR', 'No se desconecta', 'Número real', 'API oficial Meta'].map(t => (
                       <div key={t} className="flex items-center gap-1.5 text-xs text-white/30">
                         <span className="text-green-400">✓</span>{t}
                       </div>
@@ -316,28 +271,17 @@ export default function ConnectWhatsAppPage() {
               </>
             )}
 
-            {/* ── OPENING popup ── */}
-            {(step.kind === 'opening') && (
-              <>
-                <Header title="Abriendo Meta…" />
-                <Spinner label="Iniciando ventana de Facebook…" />
-              </>
-            )}
-
-            {/* ── WAITING (popup open) ── */}
+            {/* ── WAITING (FB popup open) ── */}
             {step.kind === 'waiting' && (
               <>
                 <Header title="Completá el proceso en Facebook" sub="Se abrió una ventana de Meta. Seguí los pasos allí." />
-
                 <div className="bg-[#1877F2]/8 border border-[#1877F2]/20 rounded-xl p-4 mb-5 text-sm text-white/60">
-                  <p className="font-semibold text-white/80 mb-1">¿No ves la ventana?</p>
-                  <p className="text-xs">Tu navegador puede haberla minimizado o bloqueado. Buscala en la barra de tareas o habilitá los popups para este sitio.</p>
+                  <p className="font-semibold text-white/80 mb-1">¿No ves la ventana de Facebook?</p>
+                  <p className="text-xs">Tu navegador puede haberla minimizado o bloqueado. Habilitá los popups para este sitio e intentá de nuevo.</p>
                 </div>
-
-                <Spinner label="Esperando que completes el proceso…" />
-
+                <Spinner label="Esperando autorización de Meta…" />
                 <button
-                  onClick={() => { clearPoll(); setStep({ kind: 'idle' }); }}
+                  onClick={() => setStep({ kind: 'idle' })}
                   className="w-full mt-4 text-xs text-white/20 hover:text-white/50 border border-white/8 py-2 rounded-xl transition-colors"
                 >
                   Cancelar
@@ -379,7 +323,9 @@ export default function ConnectWhatsAppPage() {
                             <p className="text-white/20 text-[10px] mt-0.5">{acct.waba_name}</p>
                           </div>
                           <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-                            {phone.verified && <span className="text-[10px] text-green-400 bg-green-500/10 px-2 py-0.5 rounded-full">Verificado</span>}
+                            {phone.verified && (
+                              <span className="text-[10px] text-green-400 bg-green-500/10 px-2 py-0.5 rounded-full">Verificado</span>
+                            )}
                             <span className="text-white/30 group-hover:text-[#F5A623] text-base transition-colors">→</span>
                           </div>
                         </div>
@@ -406,12 +352,8 @@ export default function ConnectWhatsAppPage() {
                     <span className="text-green-400 font-semibold text-sm">Conectado</span>
                   </div>
                   <div className="space-y-2 text-sm">
-                    {step.session.display_name && (
-                      <Row label="Cuenta" value={step.session.display_name} />
-                    )}
-                    {step.session.phone_number && (
-                      <Row label="Número" value={step.session.phone_number} />
-                    )}
+                    {step.session.display_name && <Row label="Cuenta"         value={step.session.display_name} />}
+                    {step.session.phone_number  && <Row label="Número"         value={step.session.phone_number} />}
                     <Row label="Phone Number ID" value={step.session.phone_number_id} mono />
                   </div>
                 </div>
@@ -443,7 +385,7 @@ export default function ConnectWhatsAppPage() {
                     { key: 'waba_id',         label: 'WABA ID *',          ph: '1002415845870920' },
                     { key: 'access_token',    label: 'Access Token *',     ph: 'EAASpm3…' },
                     { key: 'phone_number',    label: 'Número (opcional)',   ph: '+54 9 11 2756-9518' },
-                    { key: 'display_name',   label: 'Nombre (opcional)',   ph: 'Mi Negocio' },
+                    { key: 'display_name',    label: 'Nombre (opcional)',   ph: 'Mi Negocio' },
                   ] as const).map(({ key, label, ph }) => (
                     <div key={key}>
                       <label className="block text-xs text-white/40 mb-1">{label}</label>
@@ -480,21 +422,12 @@ export default function ConnectWhatsAppPage() {
           {step.kind === 'idle' && (
             <p className="text-center text-white/18 text-xs">
               Necesitás una cuenta de{' '}
-              <a href="https://business.facebook.com" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-white/40 transition-colors">
+              <a href="https://business.facebook.com" target="_blank" rel="noopener noreferrer"
+                className="underline underline-offset-2 hover:text-white/40 transition-colors">
                 Meta Business Manager
               </a>
               {' '}con WhatsApp Business Platform activo.
             </p>
-          )}
-
-          {/* Redirect URI info card (for Meta App config) */}
-          {step.kind === 'idle' && META_APP_ID && (
-            <div className="bg-[#141414] border border-white/5 rounded-xl px-4 py-3">
-              <p className="text-white/25 text-xs mb-1 font-semibold uppercase tracking-wide">OAuth Redirect URI (Meta App)</p>
-              <p className="text-white/50 font-mono text-xs break-all select-all">
-                {typeof window !== 'undefined' ? `${window.location.origin}/auth/meta/callback` : '/auth/meta/callback'}
-              </p>
-            </div>
           )}
         </div>
       </main>
@@ -502,7 +435,7 @@ export default function ConnectWhatsAppPage() {
   );
 }
 
-// ─── Small icon components ────────────────────────────────────────────────────
+// ─── Icon components ──────────────────────────────────────────────────────────
 function WaIcon() {
   return (
     <svg className="w-6 h-6 text-green-400" fill="currentColor" viewBox="0 0 24 24">

@@ -209,8 +209,11 @@ router.post('/meta/embedded-signup', auth, async (req, res) => {
         });
       }
 
-      const callbackUrl = redirect_uri || `${process.env.APP_URL || 'http://localhost:3000'}/auth/meta/callback`;
-      const tokenPath   = `/v22.0/oauth/access_token?client_id=${encodeURIComponent(appId)}&client_secret=${encodeURIComponent(appSecret)}&redirect_uri=${encodeURIComponent(callbackUrl)}&code=${encodeURIComponent(code)}`;
+      // redirect_uri is optional: FB.login() (Embedded Signup) codes don't need it;
+      // plain OAuth codes require it to match the original redirect_uri.
+      const tokenPath = redirect_uri
+        ? `/v22.0/oauth/access_token?client_id=${encodeURIComponent(appId)}&client_secret=${encodeURIComponent(appSecret)}&redirect_uri=${encodeURIComponent(redirect_uri)}&code=${encodeURIComponent(code)}`
+        : `/v22.0/oauth/access_token?client_id=${encodeURIComponent(appId)}&client_secret=${encodeURIComponent(appSecret)}&code=${encodeURIComponent(code)}`;
       const tokenRes    = await graphGet(tokenPath);
 
       logger.wa(`[EmbeddedSignup] Token exchange response: ${JSON.stringify(tokenRes).slice(0,120)}`);
