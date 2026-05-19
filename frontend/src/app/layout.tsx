@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import { ThemeProvider } from '@/components/ThemeProvider';
 
 export const viewport: Viewport = {
   themeColor: '#0a0a0a',
@@ -8,7 +9,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://perseo.app'),
+  metadataBase: new URL('https://perseo.midmarketing.com.ar'),
   title: {
     default: 'Perseo — Convertí tus campañas de WhatsApp en un sistema medible',
     template: '%s — Perseo',
@@ -23,27 +24,15 @@ export const metadata: Metadata = {
   authors: [{ name: 'MID Marketing', url: 'https://perseo.app' }],
   creator: 'MID Marketing',
   publisher: 'MID Marketing',
-  robots: {
-    index: true,
-    follow: true,
-    googleBot: { index: true, follow: true },
-  },
+  robots: { index: true, follow: true, googleBot: { index: true, follow: true } },
   openGraph: {
     type: 'website',
     locale: 'es_AR',
     url: 'https://perseo.app',
     siteName: 'Perseo',
     title: 'Perseo — Convertí tus campañas de WhatsApp en un sistema medible',
-    description:
-      'Organizá, clasificá y analizá automáticamente los leads de WhatsApp. Hecho para agencias y negocios que hacen Meta Ads.',
-    images: [
-      {
-        url: '/og-image.png',
-        width: 1200,
-        height: 630,
-        alt: 'Perseo — Sistema de inteligencia comercial para WhatsApp',
-      },
-    ],
+    description: 'Organizá, clasificá y analizá automáticamente los leads de WhatsApp.',
+    images: [{ url: '/og-image.png', width: 1200, height: 630, alt: 'Perseo' }],
   },
   twitter: {
     card: 'summary_large_image',
@@ -61,7 +50,25 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="es" className="scroll-smooth">
-      <body className="bg-[#0a0a0a] text-white antialiased">{children}</body>
+      {/* Prevent FOUC: apply stored theme before React hydrates */}
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              try {
+                var t = localStorage.getItem('perseo_theme');
+                if (t === 'light') document.documentElement.classList.add('light');
+              } catch(e) {}
+            `,
+          }}
+        />
+      </head>
+      <body
+        className="antialiased"
+        style={{ backgroundColor: 'var(--bg)', color: 'var(--text-1)' }}
+      >
+        <ThemeProvider>{children}</ThemeProvider>
+      </body>
     </html>
   );
 }

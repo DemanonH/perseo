@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Política de Privacidad — Perseo',
     description: 'Política de privacidad de PERSEO por MID Marketing.',
-    url: 'https://perseo.app/privacy',
+    url: 'https://perseo.midmarketing.com.ar/privacy',
   },
 };
 
