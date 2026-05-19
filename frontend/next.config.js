@@ -14,8 +14,9 @@ const nextConfig = {
   async headers() {
     return [
       {
-        // Match all page routes but NOT static assets (/_next/static handled by Next.js)
-        source: '/((?!_next/static|_next/image|favicon|icons|og-image|apple-touch).*)',
+        // Match all page routes but NOT static assets or public legal pages
+        // (Meta's URL validator rejects pages with no-store; legal pages are public/static)
+        source: '/((?!_next/static|_next/image|favicon|icons|og-image|apple-touch|privacy|terms|data-deletion).*)',
         headers: [
           { key: 'Cache-Control', value: 'no-store, must-revalidate' },
         ],
