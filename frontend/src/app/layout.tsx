@@ -21,7 +21,7 @@ export const metadata: Metadata = {
     'scoring leads', 'google sheets leads', 'meta ads whatsapp', 'perseo',
     'mid marketing', 'captura leads automatica',
   ],
-  authors: [{ name: 'MID Marketing', url: 'https://perseo.app' }],
+  authors: [{ name: 'MID Marketing', url: 'https://perseo.midmarketing.com.ar' }],
   creator: 'MID Marketing',
   publisher: 'MID Marketing',
   robots: { index: true, follow: true, googleBot: { index: true, follow: true } },

@@ -10,13 +10,10 @@ export const TEMP_CONFIG: Record<Temp, { label: string; icon: string; badge: str
   cold: { label: 'Frío',     icon: '❄️',  badge: 'bg-slate-500/15 text-slate-400 border-slate-500/30', dot: 'bg-slate-500' },
 };
 
-interface BadgeProps {
-  temp: Temp | null | undefined;
-  size?: 'sm' | 'md';
-}
+interface BadgeProps { temp: Temp | null | undefined; size?: 'sm' | 'md'; }
 
 export function TempBadge({ temp, size = 'sm' }: BadgeProps) {
-  if (!temp) return <span className="text-white/25 text-xs">—</span>;
+  if (!temp) return <span className="text-xs" style={{ color: 'var(--text-4)' }}>—</span>;
   const { label, icon, badge } = TEMP_CONFIG[temp];
   const px = size === 'md' ? 'px-3 py-1.5 text-sm' : 'px-2 py-0.5 text-xs';
   return (
@@ -49,68 +46,72 @@ export function TempSelector({ leadId, current, onUpdate, compact = false }: Sel
   async function select(temp: Temp) {
     if (loading || temp === current) { setOpen(false); return; }
     setLoading(true);
-    try {
-      await api.leads.updateTemperature(leadId, temp);
-      onUpdate(temp);
-    } catch (err) {
-      console.error('Temperature update error:', err);
-    }
-    setLoading(false);
-    setOpen(false);
+    try { await api.leads.updateTemperature(leadId, temp); onUpdate(temp); }
+    catch (err) { console.error('Temperature update error:', err); }
+    setLoading(false); setOpen(false);
   }
 
   const options: Temp[] = ['hot', 'warm', 'cold'];
 
   return (
     <div ref={ref} className="relative inline-block">
-      <button
-        onClick={() => setOpen(o => !o)}
-        disabled={loading}
+      <button onClick={() => setOpen(o => !o)} disabled={loading}
         className={`flex items-center gap-1.5 transition-all disabled:opacity-50 ${
-          compact
-            ? 'text-xs text-white/40 hover:text-white/70 border border-white/10 hover:border-white/25 px-2 py-1 rounded-lg'
-            : 'text-xs text-white/40 hover:text-white/70'
+          compact ? 'text-xs px-2 py-1 rounded-lg' : 'text-xs'
         }`}
-        title="Cambiar temperatura manual"
-      >
+        style={compact ? {
+          color: 'var(--text-3)',
+          border: '1px solid var(--border)',
+        } : {
+          color: 'var(--text-3)',
+        }}
+        title="Cambiar temperatura manual">
         {loading ? (
-          <span className="text-white/30">···</span>
+          <span style={{ color: 'var(--text-4)' }}>···</span>
         ) : current ? (
           <>
             <span>{TEMP_CONFIG[current].icon}</span>
             {!compact && <span>{TEMP_CONFIG[current].label}</span>}
-            <span className="text-white/20 text-[10px]">▾</span>
+            <span className="text-[10px]" style={{ color: 'var(--text-4)' }}>▾</span>
           </>
         ) : (
           <>
-            <span className="text-white/20">○</span>
-            {!compact && <span className="text-white/30">Sin temp.</span>}
-            <span className="text-white/20 text-[10px]">▾</span>
+            <span style={{ color: 'var(--text-5)' }}>○</span>
+            {!compact && <span style={{ color: 'var(--text-4)' }}>Sin temp.</span>}
+            <span className="text-[10px]" style={{ color: 'var(--text-5)' }}>▾</span>
           </>
         )}
       </button>
 
       {open && (
-        <div className="absolute z-50 top-full mt-1 left-0 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-xl overflow-hidden min-w-[130px]">
+        <div className="absolute z-50 top-full mt-1 left-0 rounded-xl shadow-xl overflow-hidden min-w-[130px]"
+          style={{
+            backgroundColor: 'var(--bg-card)',
+            border: '1px solid var(--border-md)',
+            boxShadow: 'var(--shadow-md)',
+          }}>
           {options.map(temp => {
             const { label, icon, dot } = TEMP_CONFIG[temp];
             return (
               <button key={temp} onClick={() => select(temp)}
-                className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-xs hover:bg-white/5 transition-colors text-left ${
-                  current === temp ? 'text-white bg-white/5' : 'text-white/60'
-                }`}>
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 text-xs transition-colors text-left"
+                style={{
+                  color: current === temp ? 'var(--text-1)' : 'var(--text-2)',
+                  backgroundColor: current === temp ? 'var(--bg-hover)' : 'transparent',
+                }}>
                 <span className={`w-2 h-2 rounded-full ${dot}`} />
                 <span>{icon}</span>
                 <span>{label}</span>
-                {current === temp && <span className="ml-auto text-white/30">✓</span>}
+                {current === temp && <span className="ml-auto" style={{ color: 'var(--text-4)' }}>✓</span>}
               </button>
             );
           })}
           {current && (
             <>
-              <div className="border-t border-white/5 mx-2" />
+              <div className="mx-2" style={{ borderTop: '1px solid var(--border)' }} />
               <button onClick={() => select(null as unknown as Temp)}
-                className="w-full text-left px-3 py-2 text-xs text-white/25 hover:text-white/50 hover:bg-white/3 transition-colors">
+                className="w-full text-left px-3 py-2 text-xs transition-colors"
+                style={{ color: 'var(--text-4)' }}>
                 Limpiar
               </button>
             </>
